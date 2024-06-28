@@ -829,15 +829,15 @@ class ReaderViewModel(
         val notifier = SaveImageNotifier(context)
         notifier.onClear()
 
-        var directory = storageManager.getPagesDirectory()!!
-
-        if (preferences.folderPerManga().get()) {
-            directory = directory.createDirectory(DiskUtil.buildValidFilename(manga.title))!!
-        }
-
         // Copy file in background.
         viewModelScope.launchNonCancellable {
             try {
+                var directory = storageManager.getPagesDirectory()
+
+                if (preferences.folderPerManga().get() && directory != null) {
+                    directory =
+                        directory.createDirectory(DiskUtil.buildValidFilename(manga.title))!!
+                }
                 directory ?: throw Exception("Error creating directory to save page")
 
                 val file = saveImage(page, directory, manga)
@@ -857,22 +857,22 @@ class ReaderViewModel(
         isLTR: Boolean,
         @ColorInt bg: Int
     ) {
-        scope.launch {
-            if (firstPage.status != Page.State.READY) return@launch
-            if (secondPage.status != Page.State.READY) return@launch
-            val manga = manga ?: return@launch
+        viewModelScope.launchNonCancellable {
+            if (firstPage.status != Page.State.READY) return@launchNonCancellable
+            if (secondPage.status != Page.State.READY) return@launchNonCancellable
+            val manga = manga ?: return@launchNonCancellable
             val context = Injekt.get<Application>()
 
             val notifier = SaveImageNotifier(context)
             notifier.onClear()
 
-            var directory = storageManager.getPagesDirectory()!!
-
-            if (preferences.folderPerManga().get()) {
-                directory = directory.createDirectory(DiskUtil.buildValidFilename(manga.title))!!
-            }
-
             try {
+                var directory = storageManager.getPagesDirectory()!!
+
+                if (preferences.folderPerManga().get()) {
+                    directory =
+                        directory.createDirectory(DiskUtil.buildValidFilename(manga.title))!!
+                }
                 val file = saveImages(firstPage, secondPage, isLTR, bg, directory, manga)
                 DiskUtil.scanMedia(context, file.uri)
                 notifier.onComplete(file)
