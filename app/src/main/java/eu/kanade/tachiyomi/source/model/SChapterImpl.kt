@@ -18,7 +18,11 @@ class SChapterImpl : SChapter {
 
     override var scanlator: String? = null
 
+    override var uploader: String? = null
+
     override var language: String? = null
+
+    override var isUnavailable: Boolean = false
 
     override var mangadex_chapter_id: String = ""
 

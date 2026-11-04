@@ -1,26 +1,23 @@
 package eu.kanade.tachiyomi.network.services
 
 import com.skydoves.sandwich.ApiResponse
-import eu.kanade.tachiyomi.source.online.models.dto.AggregateDto
-import eu.kanade.tachiyomi.source.online.models.dto.AtHomeImageReportDto
+import eu.kanade.tachiyomi.source.online.models.dto.AuthorDto
 import eu.kanade.tachiyomi.source.online.models.dto.AuthorListDto
 import eu.kanade.tachiyomi.source.online.models.dto.ChapterDto
 import eu.kanade.tachiyomi.source.online.models.dto.ChapterListDto
 import eu.kanade.tachiyomi.source.online.models.dto.GroupListDto
-import eu.kanade.tachiyomi.source.online.models.dto.LegacyIdDto
-import eu.kanade.tachiyomi.source.online.models.dto.LegacyMappingDto
 import eu.kanade.tachiyomi.source.online.models.dto.ListDto
 import eu.kanade.tachiyomi.source.online.models.dto.MangaDto
 import eu.kanade.tachiyomi.source.online.models.dto.MangaListDto
+import eu.kanade.tachiyomi.source.online.models.dto.RecommendationListDto
 import eu.kanade.tachiyomi.source.online.models.dto.RelationListDto
 import eu.kanade.tachiyomi.source.online.models.dto.RelationshipDtoList
+import eu.kanade.tachiyomi.source.online.models.dto.SeasonalDto
 import eu.kanade.tachiyomi.source.online.models.dto.StatisticResponseDto
 import org.nekomanga.constants.MdConstants
 import org.nekomanga.core.network.ProxyRetrofitQueryMap
-import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Headers
-import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.QueryMap
@@ -57,32 +54,31 @@ interface MangaDexService {
     )
     suspend fun viewManga(@Path("id") id: String): ApiResponse<MangaDto>
 
-    @GET("${MdConstants.Api.manga}/{id}/aggregate")
-    suspend fun aggregateChapters(
-        @Path("id") mangaId: String,
-        @Query(value = "translatedLanguage[]") translatedLanguages: List<String>,
-    ): ApiResponse<AggregateDto>
-
     @GET("${MdConstants.Api.statistics}${MdConstants.Api.manga}/{id}")
-    suspend fun mangaStatistics(
-        @Path("id") mangaId: String,
-    ): ApiResponse<StatisticResponseDto>
+    suspend fun mangaStatistics(@Path("id") mangaId: String): ApiResponse<StatisticResponseDto>
+
+    @GET("${MdConstants.Api.manga}/{id}/aggregate")
+    suspend fun getAggregate(
+        @Path("id") mangaId: String
+    ): ApiResponse<eu.kanade.tachiyomi.source.online.models.dto.AggregateDto>
 
     @GET("${MdConstants.Api.statistics}${MdConstants.Api.chapter}/{id}")
-    suspend fun chapterStatistics(
-        @Path("id") chapterId: String,
-    ): ApiResponse<StatisticResponseDto>
+    suspend fun chapterStatistics(@Path("id") chapterId: String): ApiResponse<StatisticResponseDto>
 
     @GET("${MdConstants.Api.manga}/{id}/relation")
     suspend fun relatedManga(@Path("id") id: String): ApiResponse<RelationListDto>
 
+    @GET("${MdConstants.Api.manga}/{id}/recommendation")
+    suspend fun recommendedManga(@Path("id") id: String): ApiResponse<RecommendationListDto>
+
     @Headers("Cache-Control: no-cache")
     @GET(
-        "${MdConstants.Api.manga}/{id}/feed?limit=500&contentRating[]=${MdConstants.ContentRating.safe}&contentRating[]=${MdConstants.ContentRating.suggestive}&contentRating[]=${MdConstants.ContentRating.erotica}&contentRating[]=${MdConstants.ContentRating.pornographic}&includes[]=${MdConstants.Types.scanlator}&order[volume]=desc&order[chapter]=desc"
+        "${MdConstants.Api.manga}/{id}/feed?limit=500&contentRating[]=${MdConstants.ContentRating.safe}&contentRating[]=${MdConstants.ContentRating.suggestive}&contentRating[]=${MdConstants.ContentRating.erotica}&contentRating[]=${MdConstants.ContentRating.pornographic}&includes[]=${MdConstants.Types.scanlator}&includes[]=${MdConstants.Types.uploader}&order[volume]=desc&order[chapter]=desc"
     )
     suspend fun viewChapters(
         @Path("id") id: String,
         @Query(value = "translatedLanguage[]") translatedLanguages: List<String>,
+        @Query("includeUnavailable") includeUnavailable: String,
         @Query("offset") offset: Int,
     ): ApiResponse<ChapterListDto>
 
@@ -93,7 +89,8 @@ interface MangaDexService {
         @Query("offset") offset: Int,
         @Query("translatedLanguage[]") translatedLanguages: List<String>,
         @Query("contentRating[]") contentRating: List<String>,
-        @Query("excludedGroups[]") blockedScanlators: List<String>,
+        @Query("excludedGroups[]") blockedGroups: List<String>,
+        @Query("excludedUploaders[]") blockedUploaders: List<String>,
     ): ApiResponse<ChapterListDto>
 
     @Headers("Cache-Control: no-cache")
@@ -118,12 +115,18 @@ interface MangaDexService {
     @GET(MdConstants.Api.group)
     suspend fun scanlatorGroup(@Query("name") scanlator: String): ApiResponse<GroupListDto>
 
+    @Headers("Cache-Control: no-cache")
+    @GET(MdConstants.Api.group)
+    suspend fun scanlatorGroupByUuid(
+        @Query("ids[]") scanlatorUuid: String
+    ): ApiResponse<GroupListDto>
+
+    @Headers("Cache-Control: no-cache")
+    @GET("${MdConstants.Api.author}/{id}")
+    suspend fun authorByUuid(@Path("id") authorUuid: String): ApiResponse<AuthorDto>
+
     @GET("${MdConstants.Api.list}/{id}")
     suspend fun viewList(@Path("id") id: String): ApiResponse<ListDto>
 
-    @POST(MdConstants.Api.legacyMapping)
-    suspend fun legacyMapping(@Body legacyMapping: LegacyIdDto): ApiResponse<LegacyMappingDto>
-
-    @POST(MdConstants.atHomeReportUrl)
-    suspend fun atHomeImageReport(@Body atHomeImageReportDto: AtHomeImageReportDto)
+    @GET(MdConstants.seasonalApi) suspend fun getSeasonalList(): ApiResponse<SeasonalDto>
 }

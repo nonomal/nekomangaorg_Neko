@@ -2,6 +2,11 @@
 <resources>
     <string name="app_name" translatable="false">Neko</string>
 
+
+    <!-- Generic -->
+    <string name="selected">Selected</string>
+    <string name="not_selected">Not selected</string>
+    <string name="disabled">Disabled</string>
     <!--Models-->
 
     <!-- Manga Type -->
@@ -20,8 +25,8 @@
     <string name="creator">Creator</string>
     <string name="artist">Artist</string>
     <string name="description">Description</string>
-    <string name="move_x_to">Move %1$s to…</string>
-    <string name="add_x_to">Add %1$s to…</string>
+    <string name="move_x_to">Move to..</string>
+    <string name="add_x_to">Add to..</string>
 
     <!-- Status -->
     <string name="ongoing">Ongoing</string>
@@ -48,6 +53,8 @@
     <string name="unlock">Unlock</string>
     <string name="lock_with_biometrics">Require unlock</string>
     <string name="lock_when_idle">Lock when idle</string>
+    <string name="confirm_lock_change">Authenticate to confirm change</string>
+
 
     <!-- Chapters -->
     <string name="chapters">Chapters</string>
@@ -61,15 +68,20 @@
     <string name="not_bookmarked">Not bookmarked</string>
     <string name="marked_as_read">Marked as read</string>
     <string name="marked_as_unread">Marked as unread</string>
+    <string name="unavailable">Unavailable</string>
+    <string name="no_unavailable">No Unavailable</string>
+    <string name="available">Available</string>
     <string name="removed_bookmark">Removed bookmark</string>
     <string name="chapters_removed">Chapters removed.</string>
     <string name="chapter_not_found">Chapter not found</string>
     <string name="no_chapters_error">No chapters found</string>
     <string name="no_pages_found">No pages found</string>
     <string name="remove_all_downloads">Remove all downloads?</string>
+    <string name="remove_all_read_downloads">Remove all read downloads?</string>
+
     <string name="no_chapters_to_delete">No chapters to delete</string>
     <string name="by_source_order">By source\'s order</string>
-    <string name="by_chapter_number">By chapter number</string>
+    <string name="by_smart_order">By smart order</string>
     <string name="by_update_date">By upload date</string>
     <string name="scanlators">Scanlators</string>
 
@@ -103,12 +115,15 @@
     <string name="categories_on_manual">Categories to update when manually refreshing</string>
     <string name="categories_in_global_update">All categories in global update</string>
     <string name="confirm_category_deletion">Delete category?</string>
+    <string name="confirm_category_deletion_message_in">Manga in \"%1$s\" will be moved into the
+        default category.</string>
     <string name="confirm_category_deletion_message">Manga in this category will moved into the
         default category.</string>
     <string name="already_in_category">Manga already in category</string>
     <string name="add_categories">Add categories</string>
     <string name="add_edit_categories">Add/Edit categories</string>
     <string name="edit_categories">Edit categories</string>
+    <string name="edit_category">Edit category</string>
     <string name="manage_category">Manage category</string>
     <string name="move_to_categories">Move to categories</string>
     <plurals name="category_plural">
@@ -118,6 +133,14 @@
     <string name="category_with_name_exists">A category with that name already exists</string>
     <string name="category_cannot_be_blank">Category name cannot be blank</string>
     <string name="category_deleted">Category deleted</string>
+    <string name="dedupe_categories">Dedupe categories</string>
+    <string name="dedupe_categories_confirmation">Are you sure? This will delete any categories that have the same name as another and move their manga to the other category.</string>
+    <string name="dedupe_categories_summary">Delete any categories that have a duplicate name</string>
+    <string name="no_duplicate_categories">No duplicate categories found</string>
+    <plurals name="category_duplicates_removed">
+        <item quantity="one">%d duplicate category removed</item>
+        <item quantity="other">%d duplicate categories removed</item>
+    </plurals>
     <string name="long_press_category">Press and hold to edit a category</string>
     <string name="jump_to_category">Jump to category</string>
 
@@ -169,11 +192,13 @@
     <string name="updating_library">Updating library</string>
     <string name="selected_">Selected: %1$d</string>
     <string name="local">Local</string>
-    <string name="remove_from_library_question">Remove from library?</string>
+    <string name="remove_from_library_question">Remove from library? All files will be deleted.</string>
     <string name="manga_from_library">Manga from library</string>
     <string name="delete_downloads">Delete downloads</string>
     <string name="deleted_downloads">Deleted downloads</string>
     <string name="delete_downloads_question">Delete downloaded chapters?</string>
+
+    <string name="total_items">%1$d total</string>
 
 
     <string name="library_search_hint">Search title, tags</string>
@@ -191,16 +216,20 @@
     <string name="open_random_series">Open a random series</string>
     <string name="expand_all_categories">Expand all categories</string>
     <string name="collapse_all_categories">Collapse all categories</string>
+    <string name="expand">Expand</string>
+    <string name="collapse">Collapse</string>
+    <string name="expanded">Expanded</string>
+    <string name="collapsed">Collapsed</string>
     <string name="reorder_filters">Reorder filters</string>
     <string name="_unread">%d unread</string>
     <string name="search_library">Search library</string>
-    <string name="search_globally">Search \"%1$s\" MangaDex</string>
+    <string name="search_globally">Search on MangaDex</string>
 
     <string name="copy">Copy</string>
     <string name="read_progress">Read progress</string>
     <string name="series_type">Series type</string>
     <string name="series">Series</string>
-    <string name="group_library_by">Group library by…</string>
+    <string name="group_library_by">Group by</string>
     <string name="content_rating">Content rating</string>
     <string name="tracking_status">Tracking status</string>
     <string name="ungrouped">Ungrouped</string>
@@ -218,16 +247,21 @@
     <!-- Library Display -->
     <string name="display_options">Display options</string>
     <string name="can_be_found_in_library_filters">Can also be found by expanding library filters</string>
+    <string name="display_options_can_be">Display options can be found by expanding the library filter in the Library tab.</string>
     <string name="list">List</string>
-    <string name="comfortable_grid">Comfortable Grid</string>
-    <string name="cover_only_grid">Cover-only grid</string>
-    <string name="compact_grid">Compact Grid</string>
+    <string name="comfortable_grid">Comfy</string>
+    <string name="compact_grid">Compact</string>
     <string name="download_badge">Download badges</string>
-    <string name="hide_start_reading_button">Hide start reading button</string>
+    <string name="unread_badge">Unread badges</string>
+    <string name="show_start_reading_button">Show start reading button</string>
+    <string name="horizontal_categories">Horizontal categories</string>
+    <string name="show_library_action_bar">Show library action bar</string>
+    <string name="use_vivid_colors_for_headers">Use vivid colors for headers</string>
     <string name="badges">Badges</string>
     <string name="uniform_grid_covers">Uniform grid covers</string>
     <string name="use_staggered_grid">Use staggered grid</string>
     <string name="show_outline_around_covers">Show outline around covers</string>
+    <string name="show_outline_around_cards">Show outline around cards</string>
     <string name="grid_size">Grid size</string>
     <string name="_per_row">%d per row</string>
     <string name="hide_unread_badges">Hide unread badges</string>
@@ -235,11 +269,11 @@
     <string name="show_unread_count">Show unread count</string>
     <string name="tap_library_to_show_filters">Tap the Library icon to show filters</string>
     <string name="display_as">Display as</string>
-    <string name="display_as_">Display as %1$s</string>
-    <string name="display_as_grid">Display as grid</string>
-    <string name="display_as_list">Display as list</string>
-    <string name="hide_library_manga">Hide library entries</string>
-    <string name="show_library_manga">Show library entries</string>
+    <string name="grid">Grid</string>
+    <string name="filter_results">Filter results</string>
+    <string name="hide_library_manga">Non library</string>
+    <string name="show_all_manga">All</string>
+    <string name="show_library_manga">Only library</string>
     <string name="hide_category_hopper">Hide category hopper</string>
     <string name="more_library_settings">More library settings</string>
     <string name="shift_one_page_over">Shift one page over</string>
@@ -279,10 +313,13 @@
 
     <!-- Library settings -->
     <string name="library_update_frequency">Library update frequency</string>
-    <string name="library_update_order">Library update order</string>
-    <string name="library_update_device_restriction">Library device update restrictions</string>
+    <string name="library_update_device_restriction">Library device auto update restrictions</string>
     <string name="library_update__device_restriction_summary">Update only when the conditions are met</string>
     <string name="restrictions_">Restrictions: %1$s</string>
+    <string name="data_saver_warning">Warning</string>
+    <string name="data_saver_warning_summary">When using a metered connection, the Android system may block this app from running background updates to save data. You can bypass this by whitelisting the app in your device\'s Data Saver settings.</string>
+    <string name="data_saver_warning_button">Open settings</string>
+
     <string name="smart_library_update_restrictions">Smart library update restrictions</string>
     <string name="smart_library_has_unread">Skip manga with unread chapter(s)</string>
     <string name="smart_library_has_not_started">Skip unstarted manga</string>
@@ -293,7 +330,22 @@
     <string name="smart_library_tracking_is_plan_to_read">Skip manga with tracking status "Plan to read"</string>
 
 
-    <string name="faster_library_update">Update library faster.  Skips updating manga metadata etc</string>
+    <string name="enable_local_manga">Enable local manga support</string>
+    <string name="enable_local_manga_summary">When enabled, this causes updates to scan the filesystem for each manga, looking for local downloads, not tied to MangaDex or an External source.  Disable if you have slow library updates.</string>
+
+    <string name="chapter_scanlator_filter_option">Chapter scanlator filter type</string>
+    <string name="chapter_filter_any">Match any</string>
+    <string name="chapter_filter_any_summary">If any of the scanlator groups matches the filter, the chapter will be filtered out.</string>
+    <string name="chapter_filter_all">Match all</string>
+    <string name="chapter_filter_all_summary">"If all of the scanlator groups match the filter, the chapter will be filtered out."</string>
+
+
+    <string name="skip_manga_metadata_title">Skip updating the manga metadata and covers during library update</string>
+    <string name="skip_manga_metadata_description">Enabling this speeds up the library update and only updates the chapters for a manga.</string>
+    <string name="prioritize_library_title">Prioritize library update</string>
+    <string name="prioritize_library_description">This speeds up the library update drastically but prevents you from using Browse, or reading a chapter that is not downloaded.  On lower end devices it might also cause your device to crash. </string>
+    <string name="include_unavailable">Include unavailable chapters</string>
+    <string name="include_unavailable_summary">If a chapter was removed from MangaDex this shows the placeholder for the removed chapter.  Note: Library filters for unavailable chapters only shows after app restart</string>
     <string name="sort_by_ignoring_articles">Sort by ignoring articles</string>
     <string name="when_sorting_ignore_articles">When sorting alphabetically, sort ignoring
         articles (a, an, the) at the start of manga titles</string>
@@ -302,24 +354,39 @@
     <string name="auto_refresh_covers">Automatically refresh covers</string>
     <string name="auto_refresh_covers_summary">Refresh covers in library as well
         when updating library</string>
+    <string name="dynamic_cover">Dynamic covers</string>
+    <string name="dynamic_cover_summary">Show current reading volume artwork on cover</string>
     <string name="global_updates">Global updates</string>
     <string name="display_buttons_bottom_reader">Buttons at bottom of reader</string>
     <string name="certain_buttons_can_be_found">Certain buttons can be found in other places if disabled here</string>
     <string name="search_suggestions">Search suggestions</string>
     <string name="search_tips_show_periodically">Search tips will show up periodically. Long press the suggestion to search it.</string>
 
-    <!-- Recents -->
+    <!-- Feed -->
     <string name="recents">Recents</string>
+    <string name="clear_recent_searches">Clear recent searches</string>
+    <string name="feed">Feed</string>
     <string name="updates_and_history">Updates &amp; history</string>
     <string name="updates">Updates</string>
-    <string name="newly_added">Newly added</string>
+    <string name="newly_added">Unstarted library manga</string>
+    <string name="feed_continue_reading">Continue reading</string>
+    <string name="recently_updated_manga">Recently updated manga</string>
     <string name="history">History</string>
+    <string name="summary">Summary</string>
+    <string name="entire_series">Entire series</string>
     <string name="reset_chapter_history">Reset chapter history</string>
     <string name="recent_updates">Recent updates</string>
+    <string name="search_history">Search history</string>
+    <string name="search_updates">Search updates</string>
+
+    <string name="this_will_remove_the_read_date_for_all">This will remove the read date for all chapters of: </string>
+    <string name="this_will_remove_the_read_date">This will remove the read date for:</string>
+    <string name="are_you_sure">Are you sure?</string>
     <string name="this_will_remove_the_read_date_for_x_question">This will remove the read date of
         \"%1$s\". Are you sure?</string>
     <string name="this_will_remove_the_read_date_question">This will remove the read date of this
         chapter. Are you sure?</string>
+    <string name="reset_all_chapters">Reset all chapters</string>
     <string name="reset_all_chapters_for_this_">Reset all chapters for this %1$s</string>
     <string name="last_read_">Last read %1$s</string>
     <string name="read_">Read %1$s</string>
@@ -334,13 +401,22 @@
     <string name="no_recently_read_manga">No recently read manga</string>
     <string name="grouped">Grouped</string>
     <string name="reset_chapter_question">Reset chapter?</string>
+    <string name="remove_all_history_question">Remove all history?</string>
+    <string name="remove_history">Remove history</string>
     <string name="press_and_hold_to_also_reset">Press and hold can also reset chapter history</string>
     <string name="show_download_button">Show download button</string>
+    <string name="showing_x_most_recent">Showing 25 most recent chapters</string>
     <string name="only_unread">Only unread</string>
     <string name="only_downloaded">Only downloaded</string>
     <string name="unread_or_downloaded">Unread or downloaded</string>
     <string name="clear_history">Clear history</string>
+    <string name="clear_download_source">Clear source</string>
+    <string name="clear_download_queue">Clear download queue</string>
+    <string name="clear_download_queue_confirmation">Are you sure?</string>
+    <string name="clear_download_queue_completed">Download queue cleared</string>
     <string name="clear_history_completed">History deleted</string>
+    <string name="clear_history_confirmation_1">Clear all history?</string>
+    <string name="clear_history_confirmation_2">All history will be lost, and is not recoverable.</string>
     <string name="clear_history_confirmation">Are you sure? All history will be lost.</string>
 
 
@@ -351,7 +427,13 @@
     <string name="a_while_ago">A while ago</string>
     <string name="show_updated_time">Show updated time</string>
     <string name="sort_fetched_time">Sort by fetched time</string>
-    <string name="group_chapters_together">Group chapters together</string>
+    <string name="feed_swipe_refresh_enabled">Enable swipe refresh library</string>
+    <string name="group_chapters_together">Group chapters</string>
+    <string name="group_no">No</string>
+    <string name="group_by_series">By series</string>
+    <string name="group_by_day">By day</string>
+    <string name="group_by_week">By week</string>
+
     <string name="uniform_covers">Uniform covers</string>
     <string name="affects_library_grid">Affects library grid covers</string>
 
@@ -365,8 +447,10 @@
     <string name="global_search">Global search…</string>
     <string name="label_global_search">Global search</string>
     <string name="latest">Latest uploads</string>
+    <string name="feed_updates">Feed updates</string>
     <string name="recently_added">Recently added</string>
-    <string name="popularNewTitles">Popular new titles</string>
+    <string name="popular_new_titles">Popular new titles</string>
+    <string name="latest_chapters">Latest chapters</string>
     <string name="browse">Browse</string>
     <string name="has_available_chapters">Has available chapters</string>
     <string name="tag_inclusion_mode">Tag inclusion mode</string>
@@ -439,12 +523,16 @@
     <string name="save_combined_pages">Save combined pages</string>
 
     <!-- Reader settings -->
+    <string name="slider_position">Slider position</string>
+    <string name="left_align">Left align</string>
+    <string name="horizontal">Horizontal</string>
+    <string name="right_align">Right align</string>
     <string name="fullscreen">Fullscreen</string>
     <string name="animate_page_transitions">Animate page transitions</string>
     <string name="enable_zoom_out">Enable zoom out</string>
     <string name="double_tap_anim_speed">Double tap animation speed</string>
     <string name="show_page_number">Show page number</string>
-    <string name="true_32bit_color">32-bit color</string>
+    <string name="display_profile">Custom display profile</string>
     <string name="page_preload_amount">Page preload amount</string>
     <string name="amount_of_pages_to_preload">The amount of pages to preload when reading. Higher values will result in a smoother reading experience, at the cost of higher cache and network usage.</string>
     <string name="reduces_banding_impacts_performance">Reduces banding, but may impact
@@ -456,9 +544,11 @@
     <string name="crop_borders">Crop borders</string>
     <string name="crop_borders_paged">Crop borders (Paged)</string>
     <string name="crop_borders_webtoon">Crop borders (Webtoon)</string>
+    <string name="disable_gaps">Disable gaps</string>
     <string name="remove_crop">Remove crop</string>
     <string name="use_custom_brightness">Use custom brightness</string>
     <string name="grayscale">Grayscale</string>
+    <string name="grayscale_toggle">Toggle grayscale</string>
     <string name="pref_inverted_colors">Inverted</string>
     <string name="double_page_rotate">Rotate wide pages to fit</string>
     <string name="double_page_rotate_reverse">Flip orientation of rotated wide pages</string>
@@ -486,7 +576,6 @@
     <string name="left_to_right_viewer">Left to right</string>
     <string name="right_to_left_viewer">Right to left</string>
     <string name="vertical_viewer">Vertical</string>
-    <string name="continuous_vertical">Continuous vertical</string>
     <string name="paged">Paged</string>
     <string name="scale_type">Scale type</string>
     <string name="double_page_gap">Double page gap</string>
@@ -548,10 +637,15 @@
     <string name="ignore_cutout_areas">Ignore cutout areas</string>
     <string name="cutout_behavior_only_applies">Cutout area behavior only applies in portrait mode with certain scale types</string>
     <string name="page_layout">Page layout</string>
-    <string name="automatic_can_still_switch">While using automatic page layout, you can still switch between layouts while reading without overriding this setting</string>
+    <string name="automatic_can_still_switch">This feature is still in Beta. While using automatic page layout, you can still switch between layouts while reading without overriding this setting</string>
     <string name="automatic_orientation">Automatic (based on orientation)</string>
     <string name="actions">Actions</string>
     <string name="show_on_long_press">Show on long press</string>
+    <string name="eink">E-Ink</string>
+    <string name="eink_16bit">16-bit color</string>
+    <string name="eink_16bit_description">Filter for color e-ink displays</string>
+    <string name="eink_dither">Floyd-Steinberg dithering</string>
+    <string name="eink_dither_description">Reduces color banding</string>
     <string name="save_pages_separately">Save pages in separate folders</string>
     <string name="create_folders_by_manga_title">Creates folders according to manga title</string>
     <string name="pref_hide_threshold">Sensitivity for hiding menu on scroll</string>
@@ -595,6 +689,7 @@
     <string name="next_3_unread">Three</string>
     <string name="next_5_unread">Five</string>
     <string name="next_10_unread">Ten</string>
+    <string name="next_20_unread">Twenty</string>
     <plurals name="next_unread_chapters">
         <item quantity="one">Next unread chapter</item>
         <item quantity="other">Next %d unread chapters</item>
@@ -606,9 +701,11 @@
     <string name="show_all">Show All</string>
     <string name="show_bookmarked_chapters">Show bookmarked chapters</string>
     <string name="show_downloaded_chapters">Show downloaded chapters</string>
+    <string name="create_manga_folder">Create manga folder</string>
     <string name="show_unread_chapters">Show unread chapters</string>
     <string name="show_read_chapters">Show read chapters</string>
     <string name="hide_chapter_titles">Hide chapter titles</string>
+    <string name="show_available_chapters">Show available chapters</string>
     <string name="sort_by_source_s_order">Sort by source\'s order</string>
     <string name="sort_by_chapter_number">Sort by chapter number</string>
     <string name="newest_first">Newest to oldest</string>
@@ -644,6 +741,9 @@
     <string name="enhanced_services">Enhanced services</string>
     <string name="enhanced_tracking_info">Services that provide enhanced features for specific sources. Manga are automatically tracked when added to your library.</string>
     <string name="update_tracking_after_reading">Update tracking after reading</string>
+    <string name="mark_chapters_from_tracker">Mark chapters on tracker sync</string>
+    <string name="mark_chapters_from_tracker_subtitle">Marks chapters as read, when entering the manga, if unread chapters are lower than the tracker.</string>
+
     <string name="update_tracking_marked_read">Update tracking when marked as read</string>
     <string name="reading">Reading</string>
     <string name="currently_reading">Currently Reading</string>
@@ -652,6 +752,8 @@
     <string name="plan_to_read">Plan to read</string>
     <string name="want_to_read">Want to Read</string>
     <string name="paused">Paused</string>
+    <string name="considering">Considering</string>
+    <string name="repeating">Rereading</string>
     <string name="rereading">Rereading</string>
     <string name="score">Score</string>
     <string name="status">Status</string>
@@ -666,12 +768,15 @@
     <string name="cannot_remove_tracking_while_offline">Tracker cannot be removed from %1$s while offline</string>
     <string name="remove_tracking_from_">Also remove from %1$s</string>
     <string name="remove_previous_tracker">Remove previous tracker?</string>
+    <string name="remove_x_from_service">Remove %1$s from %2$s</string>
     <string name="remove_x_from_service_and_add_y">Remove %1$s from %2$s and add %3$s</string>
+    <string name="keep_on_service">Keep on %1$s and only remove locally</string>
     <string name="keep_both_on_service">Keep both on %1$s and only replace locally</string>
     <string name="anilist" translatable="false">AniList</string>
     <string name="myanimelist" translatable="false">MyAnimeList</string>
     <string name="kitsu" translatable="false">Kitsu</string>
     <string name="manga_updates" translatable="false">MangaUpdates</string>
+    <string name="mangabaka" translatable="false">MangaBaka</string>
     <string name="update_tracking_scoring_type">Update %1$s\'s scoring type</string>
     <string name="auto_track">Automatically link tracking</string>
     <string name="scoring_type_updated">Scoring type updated</string>
@@ -733,6 +838,7 @@
     <string name="reader">Reader</string>
     <string name="appearance">Appearance</string>
     <string name="advanced">Advanced</string>
+    <string name="debug">Debug</string>
     <string name="about">About</string>
     <string name="help">Help</string>
     <string name="search_settings">Search settings</string>
@@ -750,33 +856,33 @@
     <string name="dark_theme">Dark theme</string>
     <string name="amoled_black">AMOLED Black</string>
     <string name="dark">Neko Green</string>
-    <string name="outrun">Outrun</string>
-    <string name="sapphire_dusk">Sapphire Dusk</string>
-    <string name="grey_wolf">Grey Wolf</string>
+    <string name="miami_vice">Miami Vice</string>
     <string name="light_blue">Light Blue</string>
     <string name="dark_blue">Dark Blue</string>
-    <string name="midnight_dusk">Midnight Dusk</string>
-    <string name="spring_blossom">Spring Blossom</string>
-    <string name="strawberry_daiquiri">Strawberry Daiquiri</string>
-    <string name="a_brighter_you">A Brighter You (Dynamic)</string>
-    <string name="a_calmer_you">A Calmer You (Dynamic)</string>
+    <string name="cherry_blossom">Cherry Blossom</string>
+    <string name="kitsune_fire">Kitsune Fire</string>
+    <string name="chocolate">Chocolate</string>
+    <string name="nord">Nord</string>
+    <string name="dynamic">Dynamic</string>
     <string name="yotsuba">Yotsuba</string>
     <string name="tako">Tako</string>
     <string name="yin">Yin</string>
     <string name="yang">Yang</string>
     <string name="chocolate_strawberries">Chocolate Strawberries</string>
-    <string name="mangadex">MangaDex</string>
+    <string name="citrus_squeeze">Citrus squeeze</string>
     <string name="teal_ocean">Teal Ocean</string>
-    <string name="lavender">Lavender</string>
-    <string name="violet">Violet</string>
-    <string name="hot_pink">Hot Pink</string>
-    <string name="lime_time">Lime Time</string>
-    <string name="flat_lime">Flat Lime</string>
-    <string name="white_theme">Neko Pure</string>
+    <string name="royal">Royal</string>
+    <string name="jungle">Jungle</string>
+    <string name="crayon">Crayon</string>
+    <string name="monochrome">Monochrome</string>
+    <string name="neon_nights">Neon Nights</string>
+    <string name="tokyo_night">Tokyo Night</string>
     <string name="locale">Locale</string>
-    <string name="last_used_library_recents">Last used (Library or Recents)</string>
+    <string name="last_used_library_recents">Last used (Library or Feed)</string>
     <string name="system_default">System default</string>
     <string name="date_format">Date format</string>
+    <string name="open_links_in_browser">Open links in browser</string>
+    <string name="open_links_in_browser_summary">Use the device browser instead of the in-app WebView</string>
     <string name="manage_notifications">Manage notifications</string>
     <string name="check_for_updates">Check for updates</string>
     <string name="app_updates">App updates</string>
@@ -795,6 +901,8 @@
     <string name="force_portrait_details_description">On wide devices, force the view to be a single pane instead of double pane.</string>
     <string name="theme_buttons_based_on_cover">Theme buttons based on cover</string>
     <string name="wrap_alt_titles">Wrap the alternative titles, default is horizontal scrollable</string>
+    <string name="chapter_swipe_right_action">Swipe right on a chapter</string>
+    <string name="chapter_swipe_left_action">Swipe left on a chapter</string>
     <string name="expanded_toolbar">Expanded toolbar</string>
     <string name="show_larger_toolbar">Show a larger, expanded toolbar at the top of most pages (does not show on smaller devices regardless of setting)</string>
     <string name="hides_on_scroll">Hides when scrolling</string>
@@ -818,9 +926,14 @@
     <string name="no_new_chapters_open_details">When there\'s no new chapters, the series\' details will open instead</string>
 
     <!-- Data and Storage -->
-    <string name="data_storage">Data and Storage</string>
+    <string name="data_storage">Data and storage</string>
     <string name="storage_location">Storage location</string>
     <string name="storage_location_info">Used for automatic backups, saved images and chapter downloads.</string>
+    <string name="storage_usage">Storage usage</string>
+    <string name="storage_usage_info">This shows the overall space status of your device\'s storage drives. It is not the amount of space Neko itself is using.</string>
+    <string name="storage_used_of">%1$s used of %2$s</string>
+    <string name="storage_free">%1$s free</string>
+    <string name="available_disk_space_info">%1$s free of %2$s (total drive space)</string>
     <string name="backup">Backup</string>
     <string name="backup_and_restore">Backup and restore</string>
     <string name="create_backup">Create backup</string>
@@ -844,7 +957,7 @@
     <string name="backup_created">Backup created</string>
     <string name="restore_completed">Restore completed</string>
     <string name="restore_error">Failed to restore backup</string>
-    <string name="restore_missing_sources">Missing sources:</string>
+    <string name="restore_missing_mangadex">Warning! No MangaDex manga found in the backup.</string>
     <string name="restore_missing_trackers">Trackers not logged into:</string>
     <string name="restore_content">Restore uses sources to fetch data, carrier costs may apply.\n\nMake sure you have installed all necessary extensions and are logged in to sources and tracking services before restoring.</string>
     <string name="restore_content_full">Data from the backup file will be restored.\n\nYou will need to install any missing extensions and log in to tracking services afterwards to use them.</string>
@@ -852,10 +965,11 @@
     <string name="backup_restore_invalid_uri">Error: empty URI</string>
     <string name="creating_backup">Creating backup</string>
     <string name="backup_info">Automatic backups are enabled by default. A backup is created every 24 hours, up to 6 backups will saved. For best results  You should manually keep copies in other places as well.</string>
+    <string name="last_auto_backup_info">Last automatic backup: %1$s</string>
     <string name="what_should_backup">What do you want to backup?</string>
     <string name="restoring_backup">Restoring backup</string>
-    <string name="restore_duration">%02d min, %02d sec</string>
-    <string name="restore_miui_warning">Backup/restore may not function properly if MIUI Optimization is disabled.</string>
+    <string name="restore_duration">%1$02d min, %2$02d sec</string>
+    <string name="restore_miui_warning">Backup/Restore may not function properly if MIUI Optimization is disabled.</string>
     <string name="progress">Progress</string>
     <string name="complete">Complete</string>
     <plurals name="restore_completed_message">
@@ -863,18 +977,20 @@
         <item quantity="other">Done in %1$s with %2$s errors</item>
     </plurals>
     <string name="not_logged_into_">Not logged into %1$s</string>
+    <string name="data_management">Data Management</string>
+    <string name="total_cache_usage">Total cache usage</string>
+
 
     <!-- Advanced section -->
     <string name="clear_chapter_cache">Clear chapter cache</string>
-    <string name="data_management">Data Management</string>
     <string name="crash_logs">Crash logs</string>
     <string name="dump_crash_logs">Dump crash logs</string>
     <string name="saves_error_logs">Saves error logs to a file for sharing with the developers.  If verbose logging is enabled, extra debug logs will be included.</string>
+    <string name="dont_kill_my_app">Don\'t kill my app!</string>
     <string name="about_dont_kill_my_app">Some manufacturers have additional app restrictions that kill background services. This website has more info on how to fix it.</string>
     <string name="crash_log_saved">Crash logs saved</string>
     <string name="network">Network</string>
     <string name="doh">DNS over HTTPS</string>
-    <string name="disabled">Disabled</string>
     <string name="cloudflare" translatable="false">Cloudflare</string>
     <string name="google" translatable="false">Google</string>
     <string name="ad_guard" translatable="false">AdGuard</string>
@@ -919,6 +1035,7 @@
     <string name="clean_read_manga_not_in_library">Clean manga not in library</string>
     <string name="starting_cleanup">Starting cleanup</string>
     <string name="no_folders_to_cleanup">No folders to cleanup</string>
+    <string name="background_activity">Background activity</string>
     <string name="disable_battery_optimization">Disable battery optimization</string>
     <string name="disable_if_issues_with_updating">Disable this if you are experiencing issues
         with updating or restoring your library</string>
@@ -936,6 +1053,8 @@
 
 
     <!-- About section -->
+    <string name="developer_mode_enabled">Developer mode enabled</string>
+    <string name="developer_mode_disabled">Developer mode disabled</string>
     <string name="version">Version</string>
     <string name="build_time">Build time</string>
     <string name="send_crash_report">Send crash reports</string>
@@ -948,30 +1067,34 @@
     <string name="open_source_licenses">Open source licenses</string>
     <string name="privacy_policy">Privacy policy</string>
 
-    <!-- Login/Logout dialog -->
-    <string name="log_in_to_">Log in to %1$s</string>
+    <!-- Signin/Signout dialog -->
+    <string name="sign_in_to_">Sign in to %1$s</string>
     <string name="username">Username</string>
     <string name="email">Email address</string>
     <string name="password">Password</string>
-    <string name="log_in">Log in</string>
-    <string name="log_out">Log out</string>
-    <string name="log_out_from_">Log out from %1$s?</string>
+    <string name="sign_in">Sign in</string>
+    <string name="sign_out">Sign out</string>
+    <string name="sign_out_from_">Sign out from %1$s?</string>
     <string name="show_password">Show password</string>
 
-    <string name="successfully_logged_in">Successfully logged in</string>
+    <string name="successfully_signed_in">Successfully signed in</string>
     <string name="username_must_not_be_blank">Username or password cannot be blank</string>
 
-    <string name="successfully_logged_out">You are now logged out</string>
-    <string name="unsuccessful_logged_out">Error logging out</string>
+    <string name="successfully_signed_out">You are now signed out</string>
 
-    <string name="could_not_log_in">Error could not log in</string>
+    <string name="could_not_sign_in">Error could not sign in</string>
 
     <!-- Downloads -->
     <string name="downloads">Downloads</string>
     <string name="download_queue">Download queue</string>
     <string name="downloading_">Downloading: %1$s</string>
     <string name="cancel_all">Cancel all</string>
+    <string name="move_series">Move series</string>
+    <string name="move_download">Move download</string>
+    <string name="to_top">To top</string>
+    <string name="to_bottom">To bottom</string>
     <string name="move_series_to_top">Move series to top</string>
+    <string name="move_series_to_bottom">Move series to bottom</string>
     <string name="downloads_swipe_tutorial">Downloads can be cancelled by swiping them away\nSwipe this tip to dismiss it</string>
     <string name="cancel_all_for_series">Cancel all for this series</string>
     <string name="downloaded">Downloaded</string>
@@ -995,15 +1118,19 @@
     <string name="couldnt_download_low_space">Couldn\'t download chapters due to low disk space</string>
     <string name="download_notifier_split_page_not_found">Page %d not found while splitting</string>
     <string name="download_notifier_split_failed">Couldn\'t split downloaded image</string>
+    <string name="download_notifier_page_not_image">Downloaded page isn\'t an image</string>
+    <string name="download_notifier_cannot_create_file">Couldn\'t create a file in the download folder</string>
+    <string name="download_notifier_cannot_create_folder">Couldn\'t create the chapter folder in the download folder</string>
 
     <!-- Download Notification -->
     <string name="group_downloader">Downloads</string>
     <string name="could_not_download_unexpected_error">Could not download chapter due to unexpected error</string>
-    <string name="no_wifi_connection">No Wi-Fi connection available</string>
+    <string name="no_unmetered_connection">No Unmetered connection available</string>
+    <string name="unable_to_download">Unable to download</string>
     <string name="no_network_connection">No network connection available</string>
 
     <!-- Downloads settings -->
-    <string name="only_download_over_wifi">Only download over Wi-Fi</string>
+    <string name="only_download_over_unmetered">Only download over Unmetered connection</string>
     <string name="remove_when_marked_as_read">Remove when marked as read</string>
     <string name="remove_after_read">Remove after read</string>
     <string name="last_read_chapter">Last read chapter</string>
@@ -1024,8 +1151,9 @@
     <string name="always_delete">Always delete</string>
     <string name="automatic_removal">Automatic removal</string>
     <string name="save_chapters_as_cbz">Save as CBZ archive</string>
-    <string name="split_tall_images">Split tall images</string>
-    <string name="split_tall_images_summary">Improves reader performance</string>
+    <string name="split_tall_images_reader">Split tall images</string>
+    <string name="split_tall_images_download">Split tall images while downloading</string>
+    <string name="split_tall_images_summary">Improves webtoon reader performance</string>
 
 
     <!-- Stats -->
@@ -1036,12 +1164,19 @@
     <string name="total_manga">Total manga</string>
     <string name="chapters_read">Read chapters</string>
     <string name="chapters_bookmarked">Bookmarked chapters</string>
+    <string name="chapters_unavailable">Unavailable chapters</string>
     <string name="most_entries">Most entries</string>
     <string name="read_chapter_count">Read chapters count</string>
     <string name="average_score">Avg manga score</string>
     <string name="mean_score">Avg user score</string>
     <string name="manga_tracked">Tracked manga</string>
     <string name="chapters_downloaded">Downloaded chapters</string>
+    <string name="komga_merged">Komga merged</string>
+    <string name="mangalife_merged">MangaLife merged</string>
+    <string name="comick_merged">Comick merged</string>
+    <string name="suwayomi_merged">Suwayomi merged</string>
+    <string name="toonily_merged">Toonily merged</string>
+    <string name="weebcentral_merged">Weeb Central merged</string>
     <string name="total_tags">Total tags</string>
     <string name="manga_local">Local manga</string>
     <string name="global_update_manga">Globally updated</string>
@@ -1052,6 +1187,8 @@
     <string name="typeNoSemi">Type</string>
     <string name="read_duration">Read duration</string>
     <string name="last_library_update">Last library update</string>
+    <string name="last_library_update_duration">Last library update duration</string>
+    <string name="last_library_update_attempt">Last library update attempt</string>
     <string name="manga_status_distribution">Status distribution</string>
     <string name="content_rating_distribution">Content rating</string>
     <string name="manga_score_distribution">Score distribution</string>
@@ -1090,6 +1227,7 @@
     <string name="every_12_hours">Every 12 hours</string>
     <string name="daily">Daily</string>
     <string name="every_2_days">Every 2 days</string>
+    <string name="every_3_days">Every 3 days</string>
     <string name="weekly">Weekly</string>
     <string name="monthly">Monthly</string>
     <plurals name="after_minutes">
@@ -1101,6 +1239,7 @@
     <string name="select_cover_image">Select cover image</string>
     <string name="select_backup_file">Select backup file</string>
     <string name="file_picker_error">No file picker app found</string>
+    <string name="file_picker_uri_permission_unsupported">Failed to acquire persistent folder access. The app may behave unexpectedly.</string>
 
     <!-- Webview -->
     <string name="information_cloudflare_bypass_failure">Failed to bypass Cloudflare</string>
@@ -1123,10 +1262,11 @@
     <string name="bottom">Bottom</string>
     <string name="accept">Accept</string>
     <string name="cancel">Cancel</string>
+    <string name="ok">Ok</string>
     <string name="center">Center</string>
     <string name="change">Change</string>
-    <string name="charging">Charging</string>
-    <string name="battery_not_low">Battery not low</string>
+    <string name="charging">Only when charging</string>
+    <string name="network_not_metered">Only on unmetered network</string>
     <string name="clear">Clear</string>
     <string name="clear_filters">Clear filters</string>
     <string name="close">Close</string>
@@ -1161,6 +1301,8 @@
     <string name="less">Less</string>
     <string name="loading">Loading…</string>
     <string name="lock">Lock</string>
+    <string name="mark">Mark</string>
+    <string name="mark_as">Mark as</string>
     <string name="mark_as_read">Mark as read</string>
     <string name="mark_read">Mark read</string>
     <string name="mark_as_unread">Mark as unread</string>
@@ -1170,11 +1312,15 @@
     <string name="mark_range_as">Mark range as</string>
     <string name="mark_previous_as">Mark Previous as</string>
     <string name="block_scanlator">Block scanlator</string>
-    <string name="currently_blocked_scanlators">Currently blocked scanlators</string>
-    <string name="currently_blocked_scanlators_description">These are blocks in the app only, as the app does not use or sync with the MangaDex website setting.</string>
-    <string name="unblock_scanlator">Unblock scanlator</string>
-    <string name="no_blocked_scanlator">No blocked scanlators</string>
+    <string name="currently_blocked_groups">Currently blocked groups</string>
+    <string name="currently_blocked_uploaders">Currently blocked uploaders</string>
+    <string name="currently_blocked_description">These are blocks in the app only, as the app does not use or sync with the MangaDex website setting.</string>
+    <string name="unblock_group">Unblock groups</string>
+    <string name="no_blocked_groups">No blocked groups</string>
+    <string name="unblock_uploader">Unblock uploader</string>
+    <string name="no_blocked_uploaders">No blocked uploaders</string>
     <string name="delete_saved_filters">Delete saved filters</string>
+    <string name="saved_filters_deleted">Saved filters deleted</string>
     <string name="delete_saved_filters_description">Use this if you get a parse exception clicking the search button in browse, or want to delete all your saved search filters.</string>
 
     <string name="menu">menu</string>
@@ -1203,9 +1349,12 @@
     <string name="open_merged_in_webview">Open Merged source in WebView</string>
     <string name="merge_source_">Merge Source: %1$s</string>
     <string name="remove_merged_source">Remove merged source</string>
+    <string name="merged_sources">Merged Sources</string>
+    <string name="add_merge_source">Add merge source</string>
     <string name="options">Options</string>
     <string name="pause">Pause</string>
     <string name="picture_saved">Picture saved</string>
+    <string name="could_not_delete_picture">Could not delete picture</string>
     <string name="pin">Pin</string>
     <string name="pinned">Pinned</string>
     <string name="preview">Preview</string>
@@ -1226,6 +1375,7 @@
     <string name="save">Save</string>
     <string name="set">Set</string>
     <string name="search">Search</string>
+    <string name="cancel_search">Cancel search</string>
     <string name="search_">Search %1$s</string>
     <string name="select_all">Select all</string>
     <string name="select_none">Select none</string>
@@ -1278,6 +1428,8 @@
     <string name="has_missing_chp">Missing chapters</string>
     <string name="not_merged">Not merged</string>
     <string name="merged">Merged</string>
+    <string name="has_unavailable">Has unavailable</string>
+    <string name="has_available">Has available</string>
 
 
     <!-- Library Sort -->
@@ -1292,12 +1444,15 @@
 
 
     <!-- Manga Details-->
-    <string name="_tracked">%1$s Tracked</string>
     <string name="artwork">Artwork</string>
+    <string name="no_artwork_found">"No artwork found, try refreshing the manga."</string>
     <string name="similar_work">Similar Work</string>
     <string name="is_merged">Merged</string>
     <string name="is_not_merged">Merge</string>
     <string name="links">Links</string>
+    <string name="supported_links">Supported links</string>
+    <string name="supported_links_summary">Open Android settings to choose which links are associated with this app</string>
+    <string name="system">System</string>
     <string name="open_external">Open external links</string>
     <string name="comments">Comments</string>
     <string name="comments_unavailable">"Comments not available"</string>
@@ -1307,14 +1462,17 @@
     <string name="start_reading_">Start reading %1$s</string>
     <string name="continue_reading_">Continue reading %1$s</string>
     <string name="tap_to_show_similar_manga">Tap here to show similar manga</string>
-    <string name="filter_groups">Filter Scanlator Groups</string>
-    <string name="filter_groups_title">Scanlator groups to show</string>
+    <string name="filter_source">Filter Source</string>
+    <string name="filter_scanlators">Filter Scanlators</string>
     <string name="filter_languages">Filter Languages</string>
 
     <string name="scanlator_groups">Scanlator groups</string>
     <string name="reset_group_filter">Reset to all</string>
     <string name="hide_button_text">Hide Backdrop button text</string>
-    <string name="extra_large_backdrop">Make the backdrop cover extra large</string>
+    <string name="small">Small</string>
+    <string name="default_size">Default</string>
+    <string name="large">Large</string>
+    <string name="backdrop_size">Change Manga Screen backdrop size</string>
 
 
     <string name="mdlist">MDList</string>
@@ -1333,9 +1491,21 @@
 
     <!-- Crash screen -->
     <string name="crash_screen_title">An Unexpected Error Occurred</string>
-    <string name="crash_screen_description">%s ran into an unexpected error. We suggest you screenshot this message, dump the crash logs, and then open a GitHub issue.</string>
+    <string name="crash_screen_description">%s ran into an unexpected error. We suggest you screenshot this message, share the crash log, and then open a GitHub issue.</string>
     <string name="crash_screen_restart_application">Restart the application</string>
+    <string name="share_crash_log">Share crash log</string>
+    <string name="crash_log_share_failed">Could not share the crash log</string>
+    <string name="crash_log_folder_failed">Could not create the crash logs folder</string>
+    <string name="crash_log_save_failed">Could not save the crash log</string>
+    <string name="crash_report_dialog_title">%s crashed last time</string>
+    <string name="crash_report_dialog_body">A log of the crash was saved on this device. Share it when you report the problem.</string>
+    <string name="dismiss">Dismiss</string>
 
+
+    <!-- MangaDex authentication notification -->
+    <string name="authentication_channel">MangaDex sign-in</string>
+    <string name="mangadex_session_expired_title">Signed out of MangaDex</string>
+    <string name="mangadex_session_expired_body">Your library and reading progress are no longer syncing. Tap to sign in again.</string>
 
     <!-- Follows -->
     <string name="status_channel">Manga status sync</string>
@@ -1359,78 +1529,94 @@
     <!-- Similar -->
     <string name="similar_type">Similar</string>
     <string name="related_type">Related</string>
+    <string name="recommended_type">Recommended</string>
     <string name="similar">Similar Manga</string>
     <string name="similar_credit_title">Similar Manga Credits</string>
     <string name="similar_credit_message">
         For more information and to view the source code:\n%s
     </string>
 
-    <!-- Cache Source -->
-    <string name="cache">Cache Source</string>
-    <string name="cache_loading_progress_start">Downloading data file…</string>
-    <string name="cache_loading_percent">Updating cache manga (%1$d / %2$d updated)</string>
-    <string name="cache_loading_complete">Updating cache manga complete!</string>
-    <string name="cache_loading_complete_error">Error trying to load/process cache manga</string>
+    <!-- Cache -->
+    <string name="cache">Cache</string>
+    <string name="parent_cache_folder">Clear parent cache folder</string>
+    <string name="chapter_disk_cache">Clear chapter disk cache</string>
+    <string name="auto_clear_chapter_cache">Clear chapter disk cache on app launch</string>
+    <string name="cover_cache">Clear cover cache</string>
+    <string name="custom_cover_cache">Clear custom cover cache</string>
+    <string name="online_cover_cache">Clear online cover cache</string>
+    <string name="image_cache">Clear image cache</string>
+    <string name="network_cache">Clear network cache</string>
+    <string name="temp_file_cache">Clear temp files</string>
+<string name="cache_cleared">Cache cleared</string>
 
     <!-- Reader Settings -->
     <string name="skip_hidden_chapters">Skip chapters hidden by filters</string>
 
     <!-- Merge Settings -->
-    <string name="merge_source_settings">Merge source settings</string>
+    <string name="merge_source_settings">Merge source</string>
+    <string name="komga">Komga</string>
+    <string name="suwayomi">Suwayomi</string>
+    <string name="signed_in_to">Signed in to: %1$s</string>
     <string name="minimum_komga_version">Minimum required Komga version: 0.151.0</string>
+    <string name="minimum_suwayomi_version">Minimum required Suwayomi-Server version: 2.3.2223</string>
+    <string name="suwayomi_login_mode">Login mode</string>
+    <string name="suwayomi_login_mode_none">None</string>
+    <string name="suwayomi_login_mode_basic">Basic Authentication</string>
+    <string name="suwayomi_login_mode_simple">Simple Login</string>
+    <string name="suwayomi_login_mode_ui">UI Login</string>
 
 
     <!-- Site Settings -->
-    <string name="site_specific_settings">MangaDex settings</string>
+    <string name="site_specific_settings">MangaDex</string>
+    <string name="chapter_group">Chapter</string>
+    <string name="image_group">Image</string>
+
     <string name="content_rating_title">Content Ratings</string>
     <string name="content_rating_summary">Choose which ratings to show in results. Choosing none is the same as choosing all.</string>
     <string name="auto_track_content_rating_title">Auto track content ratings</string>
     <string name="auto_track_content_rating_summary">Choose which ratings you want to auto track (when enabled). Choosing none is the same as choosing all.</string>
 
     <string name="content_rating_safe">Safe (No sexual themes)</string>
-    <string name="content_rating_suggestive">Suggestive (Manga usually tagged Ecchi)</string>
-    <string name="content_rating_erotica">Erotica (Manga usually tagged smut)</string>
-    <string name="content_rating_pornographic">Pornographic (Manga usually tagged Hentai)</string>
-    <string name="show_languages">Choose languages to show</string>
+    <string name="content_rating_suggestive">Suggestive (Usually tagged Ecchi)</string>
+    <string name="content_rating_erotica">Erotica (Usually tagged smut)</string>
+    <string name="content_rating_pornographic">Pornographic (Usually tagged Hentai)</string>
+    <string name="show_languages">Languages to show</string>
     <string name="data_saver">Data Saver</string>
     <string name="data_saver_summary">View/Download compressed Chapter Images</string>
     <string name="data_saver_disabled">Disabled</string>
     <string name="data_saver_enabled">Enabled</string>
-    <string name="thumbnail_quality">Thumbnail quality</string>
-    <string name="original_thumb">Original</string>
-    <string name="medium_thumb">Medium</string>
-    <string name="low_thumb">Low</string>
+    <string name="cover_quality">Cover image quality</string>
+    <string name="original_cover_quality">Original</string>
+    <string name="medium_cover_quality">Medium</string>
+    <string name="low_cover_quality">Low</string>
 
 
-    <string name="sync_follows_to_library">Sync MangaDex Follows</string>
-    <string name="sync_follows_to_library_summary">Pulls Manga from your MangaDex Follows List into your Neko library if they are not already added.</string>
-    <string name="sync_follows_to_library_toast">Synced %d new manga from MangaDex</string>
-    <string name="push_favorites_to_mangadex">Sync Library Manga to Follows</string>
-    <string name="push_favorites_to_mangadex_summary">Syncs your entire library to your MangaDex Follows List with a Reading Status</string>
+    <string name="pull_follows_to_library">Pull MangaDex follows</string>
+    <string name="pull_follows_to_library_summary">Pulls Manga from your MangaDex Follows List into your Neko library if they are not already added.</string>
+    <string name="pull_follows_to_library_toast">Pulled %d new manga from MangaDex</string>
+    <string name="push_favorites_to_mangadex">Push library to MangaDex Follows</string>
+    <string name="push_favorites_to_mangadex_summary">Pushes your entire library to your MangaDex Follows List with a Reading Status</string>
     <string name="push_favorites_to_mangadex_toast">Pushed %d manga to MangaDex</string>
-    <string name="use_new_api_server">Use the new api cache server</string>
-    <string name="use_new_api_server_summary">enable this if MangaDex starts breaking (meaning they removed old api server)</string>
-    <string name="low_quality_covers">Use low quality thumbnails</string>
+    <string name="low_quality_covers">Use low quality covers</string>
     <string name="reading_sync">Auto sync read status</string>
-    <string name="reading_sync_summary">Two way automatic sync of read/unread status of a chapter with MangaDex.  This only pulls read from MangaDex to prevent accidentally marking chapters unread</string>
+    <string name="reading_sync_summary">Two way automatic sync of read/unread status of a chapter with MangaDex and self-hosted merge sources.  This only pulls read to prevent accidentally marking chapters unread</string>
     <string name="show_content_rating_filter_in_search">Show Content rating filter in search</string>
     <string name="use_port_443_title">Use Image Servers with Port 443 only</string>
     <string name="use_port_443_summary">"Enable to only request image servers that use port 443. This allows users with stricter firewall restrictions to access MangaDex images"</string>
 
-    <string name="add_favorites_as_planned_to_read">Add to library as planned to read</string>
-    <string name="add_favorites_as_planned_to_read_summary">When enabled manga added to your library will be updated with Plan To Read Status on MangaDex</string>
-    <string name="use_cache_source">Use cached source</string>
-    <string name="use_cache_source_summary">Recommended to not use at this time, this was a legacy feature for V3 of MangaDex</string>
-
-    <string name="use_cache_source_dialog">This will download 5MB file. You only need to download it once. If you already downloaded just dismiss this dialog.</string>
+    <string name="auto_add_to_mangadex_library">Auto attach MangaDex status to new library entries</string>
 
     <!-- Advanced Settings -->
     <string name="clear_image_cache">Clear image cover cache</string>
     <string name="verbose_logging">Verbose Logging</string>
     <string name="verbose_logging_summary">Print verbose logs to system log (reduces app performance)</string>
 
-    <string name="force_download_cache_refresh">Refresh the download cache</string>
-    <string name="force_download_cache_refresh_summary">This will force the download cache to recalculate.  Use this if  you copied downloads outside of this app using your file explorer.</string>
+    <string name="reindex_downloads">Reindex downloads</string>
+    <string name="reindex_downloads_summary">Force app to recheck for downloaded chapters.</string>
+    <string name="reindex_downloads_invalidate">Reindexing downloads</string>
+    <string name="reindex_downloads_complete">Reindexing complete</string>
+    <string name="reindexing_downloads_progress">Reindexing (%1$d/%2$d)</string>
+    <string name="reindex_in_progress">Reindex already in progress</string>
 
 
     <!-- Login dialog -->
@@ -1444,9 +1630,9 @@
     <string name="spen_next_page">Next page</string>
     <string name="spen_next_chapter">Next chapter</string>
     <string name="spen_previous_chapter">Previous chapter</string>
+    <string name="spen_open_comments">Open chapter comments</string>
 
 
-    <string name="pref_dump_crash_logs">Dump crash logs</string>
     <string name="pref_dump_crash_logs_summary">Saves error logs to a file for sharing with the developers</string>
     <string name="channel_crash_logs">Crash logs</string>
 </resources>

@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.util.chapter
 
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import org.nekomanga.constants.MdConstants
 import org.nekomanga.domain.chapter.ChapterItem
 import org.nekomanga.domain.details.MangaDetailsPreferences
 import uy.kohesive.injekt.Injekt
@@ -13,72 +14,56 @@ class ChapterItemSort(
     val mangaDetailsPreferences: MangaDetailsPreferences = Injekt.get(),
 ) {
 
-    fun <T : ChapterItem> getChaptersSorted(
-        manga: Manga,
-        rawChapters: List<T>,
-        andFiltered: Boolean = true,
-        filterForReader: Boolean = false,
-        currentChapter: T? = null,
-    ): List<T> {
-        val chapters =
-            when {
-                filterForReader ->
-                    chapterFilter.filterChaptersForReader(
-                        rawChapters,
-                        manga,
-                        currentChapter,
-                    )
-                andFiltered -> chapterFilter.filterChapters(rawChapters, manga)
-                else -> rawChapters
-            }
-
-        return chapters.sortedWith(sortComparator(manga))
+    fun getChaptersSorted(manga: Manga, rawChapters: List<ChapterItem>): List<ChapterItem> {
+        return chapterFilter.filterChapters(rawChapters, manga).sortedWith(sortComparator(manga))
     }
 
-    fun <T : ChapterItem> getNextUnreadChapter(
+    fun getNextUnreadChapter(
         manga: Manga,
-        rawChapters: List<T>,
+        rawChapters: List<ChapterItem>,
         andFiltered: Boolean = true,
-    ): T? {
+    ): ChapterItem? {
         val chapters =
             when {
                 andFiltered -> chapterFilter.filterChapters(rawChapters, manga)
                 else -> rawChapters
-            }
-        return chapters.sortedWith(sortComparator(manga, true)).find { !it.chapter.read }
+            }.filter { it.chapter.scanlator !in MdConstants.UnsupportedOfficialGroupList }
+        return chapters.sortedWith(sortComparator(manga, true)).find {
+            !it.chapter.read && !it.chapter.isUnavailable
+        }
     }
 
-    fun <T : ChapterItem> sortComparator(manga: Manga, ignoreAsc: Boolean = false): Comparator<T> {
-        val sortDescending = !ignoreAsc && manga.sortDescending(mangaDetailsPreferences)
-        val sortFunction: (T, T) -> Int =
-            when (manga.chapterOrder(mangaDetailsPreferences)) {
-                Manga.CHAPTER_SORTING_SOURCE ->
-                    when (sortDescending) {
-                        true -> { c1, c2 ->
-                                c1.chapter.sourceOrder.compareTo(c2.chapter.sourceOrder)
-                            }
-                        false -> { c1, c2 ->
-                                c2.chapter.sourceOrder.compareTo(c1.chapter.sourceOrder)
-                            }
-                    }
-                Manga.CHAPTER_SORTING_NUMBER ->
-                    when (sortDescending) {
-                        true -> { c1, c2 ->
-                                c2.chapter.chapterNumber.compareTo(c1.chapter.chapterNumber)
-                            }
-                        false -> { c1, c2 ->
-                                c1.chapter.chapterNumber.compareTo(c2.chapter.chapterNumber)
-                            }
-                    }
-                Manga.CHAPTER_SORTING_UPLOAD_DATE ->
-                    when (sortDescending) {
-                        true -> { c1, c2 -> c2.chapter.dateUpload.compareTo(c1.chapter.dateUpload) }
-                        false -> { c1, c2 ->
-                                c1.chapter.dateUpload.compareTo(c2.chapter.dateUpload)
-                            }
-                    }
-                else -> { c1, c2 -> c1.chapter.sourceOrder.compareTo(c2.chapter.sourceOrder) }
+    fun sortComparator(manga: Manga, forceAscending: Boolean = false): Comparator<ChapterItem> {
+        // arrow down in UI is ASC.  The below sorts them all that way.
+        val sortAsc =
+            if (forceAscending) {
+                true
+            } else {
+                manga.sortDescending(mangaDetailsPreferences) // this really is Asc
             }
-        return Comparator(sortFunction)
+
+        return when (manga.chapterOrder(mangaDetailsPreferences)) {
+            Manga.CHAPTER_SORTING_SOURCE ->
+                when (sortAsc) {
+                    true -> compareBy { it.chapter.sourceOrder }
+                    false -> compareByDescending { it.chapter.sourceOrder }
+                }
+
+            Manga.CHAPTER_SORTING_UPLOAD_DATE ->
+                when (sortAsc) {
+                    true ->
+                        compareBy<ChapterItem> { it.chapter.dateUpload }
+                            .thenByDescending { it.chapter.smartOrder }
+                    false ->
+                        compareByDescending<ChapterItem> { it.chapter.dateUpload }
+                            .thenBy { it.chapter.smartOrder }
+                }
+            else -> { // default is Smart Sort
+                when (sortAsc) {
+                    true -> compareByDescending { it.chapter.smartOrder }
+                    false -> compareBy { it.chapter.smartOrder }
+                }
+            }
+        }
     }
 }

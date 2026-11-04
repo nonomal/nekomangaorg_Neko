@@ -1,0 +1,216 @@
+package org.nekomanga.presentation.screens.reader.viewer
+
+import android.graphics.PointF
+import android.view.ViewConfiguration
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
+import kotlin.math.hypot
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+/**
+ * Modifier handling tap navigation regions, double-tap zoom gestures, and menu toggles for the
+ * continuous Webtoon reader.
+ */
+fun Modifier.webtoonTapNavigation(
+    navigator: ViewerNavigation,
+    zoomState: WebtoonZoomState,
+    enableDoubleTapZoom: Boolean = true,
+    doubleTapAnimDuration: Int = 300,
+    menuVisible: Boolean = false,
+    coroutineScope: CoroutineScope? = null,
+    tapClaim: TapNavigationClaim? = null,
+    onToggleMenu: () -> Unit,
+    onNavigateAdjacent: (forward: Boolean) -> Unit,
+): Modifier = composed {
+    val context = LocalContext.current
+    val scope = coroutineScope ?: rememberCoroutineScope()
+    val viewConfiguration = remember(context) { ViewConfiguration.get(context) }
+    val touchSlopPx = remember(viewConfiguration) { viewConfiguration.scaledTouchSlop.toDouble() }
+    val doubleTapSlopPx =
+        remember(viewConfiguration) { viewConfiguration.scaledDoubleTapSlop.toDouble() }
+    val doubleTapTimeoutMs = remember { ViewConfiguration.getDoubleTapTimeout().toLong() }
+    val longPressTimeoutMs = remember { ViewConfiguration.getLongPressTimeout().toLong() }
+
+    val currentNavigator by rememberUpdatedState(navigator)
+    val currentMenuVisible by rememberUpdatedState(menuVisible)
+    val currentOnToggleMenu by rememberUpdatedState(onToggleMenu)
+    val currentOnNavigateAdjacent by rememberUpdatedState(onNavigateAdjacent)
+    val currentTapClaim by rememberUpdatedState(tapClaim)
+
+    pointerInput(enableDoubleTapZoom, doubleTapAnimDuration) {
+        var lastTapTime = 0L
+        var lastTapOffset = Offset.Zero
+        var pendingSingleTapJob: Job? = null
+        var heldPointer: PointerId? = null
+
+        awaitEachGesture {
+            val down =
+                awaitFirstDown(
+                    requireUnconsumed = false,
+                    pass = PointerEventPass.Initial,
+                )
+            heldPointer = down.id
+            val downPos = down.position
+            val downTime = System.currentTimeMillis()
+            var pointerUp: PointerInputChange? = null
+            var isMovementPastSlop = false
+
+            while (true) {
+                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (!change.pressed) {
+                    pointerUp = change
+                    break
+                }
+                val moveDistance =
+                    hypot(
+                        (change.position.x - downPos.x).toDouble(),
+                        (change.position.y - downPos.y).toDouble(),
+                    ) * zoomState.scale
+                if (moveDistance > touchSlopPx) {
+                    isMovementPastSlop = true
+                    break
+                }
+            }
+            heldPointer = null
+
+            // Children see the up only after this Initial pass, so a Retry tap is not
+            // consumed yet and has to be recognized by its claimed pointer
+            val isClaimed = currentTapClaim?.isClaimed(down.id) == true
+
+            if (shouldDropPendingTap(isMovementPastSlop, isClaimed)) {
+                pendingSingleTapJob?.cancel()
+                pendingSingleTapJob = null
+                lastTapTime = 0L
+                lastTapOffset = Offset.Zero
+            }
+
+            if (pointerUp != null) {
+                val up = pointerUp
+                val upPos = up.position
+                val upTime = System.currentTimeMillis()
+                val distance =
+                    hypot(
+                        (upPos.x - downPos.x).toDouble(),
+                        (upPos.y - downPos.y).toDouble(),
+                    )
+
+                if (
+                    distance < touchSlopPx &&
+                        (upTime - downTime < longPressTimeoutMs) &&
+                        !up.isConsumed &&
+                        !isClaimed
+                ) {
+                    val screenWidth = size.width.toFloat()
+                    val screenHeight = size.height.toFloat()
+
+                    if (screenWidth > 0 && screenHeight > 0) {
+                        val pos = PointF(upPos.x / screenWidth, upPos.y / screenHeight)
+                        val action = currentNavigator.getAction(pos)
+
+                        val isDoubleTap =
+                            enableDoubleTapZoom &&
+                                (upTime - lastTapTime < doubleTapTimeoutMs) &&
+                                (hypot(
+                                    (upPos.x - lastTapOffset.x).toDouble(),
+                                    (upPos.y - lastTapOffset.y).toDouble(),
+                                ) < doubleTapSlopPx) &&
+                                (doubleTapAnimDuration > 0)
+
+                        if (isDoubleTap) {
+                            // Disambiguation success: cancel pending single tap so it never fires
+                            pendingSingleTapJob?.cancel()
+                            pendingSingleTapJob = null
+                            lastTapTime = 0L
+                            lastTapOffset = Offset.Zero
+
+                            if (currentMenuVisible) {
+                                currentOnToggleMenu()
+                            }
+                            scope.launch {
+                                zoomState.toggleDoubleTapZoom(
+                                    tapPos = upPos,
+                                    viewportWidth = screenWidth,
+                                    animDuration = doubleTapAnimDuration,
+                                )
+                            }
+                        } else {
+                            lastTapTime = upTime
+                            lastTapOffset = upPos
+
+                            if (enableDoubleTapZoom && doubleTapAnimDuration > 0) {
+                                // Wait for potential second tap before executing single-tap action
+                                pendingSingleTapJob?.cancel()
+                                pendingSingleTapJob = scope.launch {
+                                    delay(doubleTapTimeoutMs)
+                                    if (!canFirePendingTap(heldPointer, currentTapClaim)) {
+                                        return@launch
+                                    }
+                                    dispatchTapAction(
+                                        action = action,
+                                        onToggleMenu = currentOnToggleMenu,
+                                        onNavigateAdjacent = currentOnNavigateAdjacent,
+                                    )
+                                }
+                            } else {
+                                dispatchTapAction(
+                                    action = action,
+                                    onToggleMenu = currentOnToggleMenu,
+                                    onNavigateAdjacent = currentOnNavigateAdjacent,
+                                )
+                            }
+                        }
+                    } else {
+                        currentOnToggleMenu()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Whether a gesture cancels the single tap still waiting out the double-tap timeout. A tap on a
+ * claimed control such as Retry is handled by that control, so the earlier tap must not fire after
+ * it.
+ */
+internal fun shouldDropPendingTap(isMovementPastSlop: Boolean, isClaimed: Boolean): Boolean =
+    isMovementPastSlop || isClaimed
+
+/**
+ * Whether the single tap that waited out the double-tap timeout may fire. A finger that went down
+ * on a claimed control such as Retry during the wait and is still held there drops it, because the
+ * gesture loop only cancels the waiting tap once that finger lifts.
+ */
+internal fun canFirePendingTap(heldPointer: PointerId?, tapClaim: TapNavigationClaim?): Boolean =
+    heldPointer == null || tapClaim?.isClaimed(heldPointer) != true
+
+private fun dispatchTapAction(
+    action: ViewerNavigation.NavigationRegion,
+    onToggleMenu: () -> Unit,
+    onNavigateAdjacent: (forward: Boolean) -> Unit,
+) {
+    when (action) {
+        ViewerNavigation.NavigationRegion.MENU -> onToggleMenu()
+        ViewerNavigation.NavigationRegion.NEXT,
+        ViewerNavigation.NavigationRegion.RIGHT -> onNavigateAdjacent(true)
+        ViewerNavigation.NavigationRegion.PREV,
+        ViewerNavigation.NavigationRegion.LEFT -> onNavigateAdjacent(false)
+    }
+}

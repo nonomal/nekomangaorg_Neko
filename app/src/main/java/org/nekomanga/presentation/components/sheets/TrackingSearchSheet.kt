@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.material.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -22,10 +25,12 @@ import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,8 +46,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import eu.kanade.tachiyomi.ui.manga.TrackingConstants.TrackSearchResult
 import jp.wasabeef.gap.Gap
 import org.nekomanga.R
@@ -52,7 +57,8 @@ import org.nekomanga.domain.track.TrackServiceItem
 import org.nekomanga.presentation.components.NekoColors
 import org.nekomanga.presentation.components.SearchFooter
 import org.nekomanga.presentation.components.dialog.TrackingSwitchDialog
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.extensions.clearFocusOnTap
 import org.nekomanga.presentation.theme.Size
 
 @Composable
@@ -72,9 +78,13 @@ fun TrackingSearchSheet(
 
     var trackSearchItem by remember { mutableStateOf<TrackSearchItem?>(null) }
 
-    BaseSheet(themeColor = themeColorState, maxSheetHeightPercentage = .9f) {
+    CompositionLocalProvider(
+        LocalRippleConfiguration provides themeColorState.rippleConfiguration,
+        LocalTextSelectionColors provides themeColorState.textSelectionColors,
+    ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+                Modifier.fillMaxWidth().navigationBarsPadding().imePadding().clearFocusOnTap()
         ) {
             Header(stringResource(id = R.string.select_an_entry), cancelClick)
 
@@ -88,6 +98,7 @@ fun TrackingSearchSheet(
                         item { Gap(Size.tiny) }
                         if (
                             alreadySelectedTrack == null &&
+                                trackSearchResult.hasMatchingId &&
                                 trackSearchResult.trackSearchResult.size == 1
                         ) {
                             trackSearchItemClick(trackSearchResult.trackSearchResult.first())
@@ -114,9 +125,11 @@ fun TrackingSearchSheet(
                                     name = stringResource(id = service.nameRes),
                                     oldName = alreadySelectedTrack?.title ?: "",
                                     newName = trackSearchItem!!.trackItem.title,
-                                    onConfirm = { alsoRemoveFromTracker ->
+                                    onConfirm = { alsoRemoveFromTracker, isReplacing ->
                                         trackingRemoved(alsoRemoveFromTracker, service)
-                                        trackSearchItemClick(trackSearchItem!!)
+                                        if (isReplacing) {
+                                            trackSearchItemClick(trackSearchItem!!)
+                                        }
                                         cancelClick()
                                     },
                                     onDismiss = { trackSearchItem = null },
@@ -130,7 +143,7 @@ fun TrackingSearchSheet(
                 else ->
                     CenteredBox(
                         themeColorState = themeColorState,
-                        trackSearchResult = trackSearchResult
+                        trackSearchResult = trackSearchResult,
                     )
             }
             var searchText by remember { mutableStateOf(title) }
@@ -139,8 +152,9 @@ fun TrackingSearchSheet(
                 labelText = stringResource(id = R.string.title),
                 title = searchText,
                 textChanged = { searchText = it },
-                search = searchTracker
+                search = searchTracker,
             )
+            Gap(Size.mediumLarge)
         }
     }
 }
@@ -148,19 +162,19 @@ fun TrackingSearchSheet(
 @Composable
 private fun CenteredBox(themeColorState: ThemeColorState, trackSearchResult: TrackSearchResult) {
     Box(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(Size.medium),
         contentAlignment = Alignment.Center,
     ) {
         when (trackSearchResult) {
             is TrackSearchResult.Loading ->
                 CircularProgressIndicator(
-                    color = themeColorState.buttonColor,
-                    modifier = Modifier.size(32.dp)
+                    color = themeColorState.primaryColor,
+                    modifier = Modifier.size(32.dp),
                 )
             is TrackSearchResult.NoResult ->
                 Text(
                     text = stringResource(id = R.string.no_results_found),
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             is TrackSearchResult.Error -> Text(text = trackSearchResult.errorMessage)
             else -> Unit
@@ -183,7 +197,7 @@ private fun TrackSearchItem(
 
     val (backdropColor, outlineColor) =
         if (isSelected) {
-            themeColorState.altContainerColor to themeColorState.buttonColor
+            themeColorState.containerColor to themeColorState.primaryColor
         } else {
             MaterialTheme.colorScheme.surface to MaterialTheme.colorScheme.outline
         }
@@ -193,9 +207,7 @@ private fun TrackSearchItem(
         border = CardDefaults.outlinedCardBorder(true).copy(brush = SolidColor(outlineColor)),
         onClick = { trackSearchItemClick(trackSearch) },
     ) {
-        Box(
-            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
-        ) {
+        Box(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             AsyncImage(
                 model =
                     ImageRequest.Builder(LocalContext.current).data(trackSearch.coverUrl).build(),
@@ -210,28 +222,26 @@ private fun TrackSearchItem(
                         .fillMaxWidth()
                         .background(
                             color = backdropColor.copy(alpha = NekoColors.highAlphaLowContrast)
-                        ),
+                        )
             ) {
                 IconButton(
                     onClick = {
                         openInBrowser(
                             trackSearch.trackItem.trackingUrl,
-                            trackSearch.trackItem.title
+                            trackSearch.trackItem.title,
                         )
                     },
                     modifier = Modifier.padding(horizontal = Size.tiny).align(Alignment.TopEnd),
                 ) {
                     Icon(
                         imageVector = Icons.Default.OpenInBrowser,
-                        contentDescription = null,
+                        contentDescription = stringResource(id = R.string.open_in_browser),
                         modifier = Modifier.size(24.dp),
                         tint = MaterialTheme.colorScheme.onSurface,
                     )
                 }
 
-                Column(
-                    modifier = Modifier.padding(Size.small),
-                ) {
+                Column(modifier = Modifier.padding(Size.small)) {
                     Text(
                         text = trackSearch.trackItem.title,
                         style =
@@ -271,7 +281,7 @@ private fun TrackSearchItem(
                                 style =
                                     MaterialTheme.typography.bodyLarge.copy(
                                         fontWeight = FontWeight.Medium
-                                    )
+                                    ),
                             )
                             Gap(Size.tiny)
                             Text(
@@ -316,7 +326,7 @@ private fun TrackSearchItem(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Check,
-                        contentDescription = null,
+                        contentDescription = stringResource(id = R.string.selected),
                         modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.surface,
                     )

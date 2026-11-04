@@ -1,9 +1,10 @@
 package eu.kanade.tachiyomi.ui.reader.model
 
-import com.jakewharton.rxrelay.BehaviorRelay
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
-import eu.kanade.tachiyomi.util.system.HashCode
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.nekomanga.logging.TimberKt
 
 data class ReaderChapter(val chapter: Chapter) {
@@ -11,12 +12,11 @@ data class ReaderChapter(val chapter: Chapter) {
     var state: State = State.Wait
         set(value) {
             field = value
-            stateRelay.call(value)
+            _stateFlow.value = value
         }
 
-    private val stateRelay by lazy { BehaviorRelay.create(state) }
-
-    val stateObserver by lazy { stateRelay.asObservable().onBackpressureBuffer() }
+    private val _stateFlow = MutableStateFlow(state)
+    val stateFlow: StateFlow<State> = _stateFlow.asStateFlow()
 
     val pages: List<ReaderPage>?
         get() = (state as? State.Loaded)?.pages
@@ -53,7 +53,7 @@ data class ReaderChapter(val chapter: Chapter) {
     }
 
     override fun hashCode(): Int {
-        return HashCode.generate(urlAndName())
+        return urlAndName().hashCode()
     }
 
     sealed class State {
@@ -64,5 +64,12 @@ data class ReaderChapter(val chapter: Chapter) {
         class Error(val error: Throwable) : State()
 
         class Loaded(val pages: List<ReaderPage>) : State()
+
+        /**
+         * True when a preload may start from this state. A failed chapter is preloaded again only
+         * on an explicit Retry, so an automatic request cannot loop on a chapter that keeps
+         * failing.
+         */
+        fun allowsPreload(isRetry: Boolean): Boolean = this == Wait || (isRetry && this is Error)
     }
 }

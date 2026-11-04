@@ -6,6 +6,7 @@ import com.jakewharton.disklrucache.DiskLruCache
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.util.storage.saveTo
+import eu.kanade.tachiyomi.util.system.toast
 import java.io.File
 import java.io.IOException
 import kotlin.math.pow
@@ -16,11 +17,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.Response
 import okio.buffer
 import okio.sink
+import org.nekomanga.R
 import org.nekomanga.domain.reader.ReaderPreferences
 import org.nekomanga.logging.TimberKt
 import tachiyomi.core.util.storage.DiskUtil
@@ -63,12 +65,11 @@ class ChapterCache(private val context: Context) {
         get() = diskCache.directory
 
     /** Returns real size of directory. */
-    private val realSize: Long
-        get() = DiskUtil.getDirectorySize(cacheDir)
-
-    /** Returns real size of directory in human readable format. */
-    val readableSize: String
-        get() = Formatter.formatFileSize(context, realSize)
+    suspend fun getReadableSize(): String =
+        withContext(Dispatchers.IO) {
+            val size = DiskUtil.getDirectorySize(cacheDir)
+            Formatter.formatFileSize(context, size)
+        }
 
     init {
         readerPreferences
@@ -118,22 +119,6 @@ class ChapterCache(private val context: Context) {
         } finally {
             TimberKt.d { "finished removing file from cache" }
         }
-    }
-
-    /**
-     * Get page list from cache.
-     *
-     * @param chapter the chapter.
-     * @return the list of pages.
-     */
-    fun getPageListFromCache(chapter: Chapter): List<Page> {
-        // Get the key for the chapter.
-        TimberKt.d { "get image pageList from cache" }
-
-        val key = DiskUtil.hashKeyForDisk(getKey(chapter))
-
-        // Convert JSON string to list of objects. Throws an exception if snapshot is null
-        return diskCache.get(key).use { json.decodeFromString(it.getString(0)) }
     }
 
     /**
@@ -202,6 +187,30 @@ class ChapterCache(private val context: Context) {
         return File(diskCache.directory, imageName)
     }
 
+    /** Delete every cached page and return the number of bytes freed. */
+    fun clear(): Long {
+        var deletedSize = 0L
+        val files = cacheDir.listFiles()?.iterator() ?: return 0L
+        while (files.hasNext()) {
+            val file = files.next()
+            val fileSize = file.length()
+            if (file.delete()) {
+                deletedSize += fileSize
+            }
+        }
+        return deletedSize
+    }
+
+    /** Clear chapter cache and toast the freed size */
+    suspend fun deleteCache() {
+        val deletedSize = clear()
+        withContext(Dispatchers.Main) {
+            context.toast(
+                context.getString(R.string.deleted_, Formatter.formatFileSize(context, deletedSize))
+            )
+        }
+    }
+
     /**
      * Add image to cache.
      *
@@ -223,8 +232,6 @@ class ChapterCache(private val context: Context) {
 
             diskCache.flush()
             editor.commit()
-        } catch (e: Exception) {
-            TimberKt.e(e) { "Error puting image to Cache" }
         } finally {
             response.body.close()
             editor?.abortUnlessCommitted()

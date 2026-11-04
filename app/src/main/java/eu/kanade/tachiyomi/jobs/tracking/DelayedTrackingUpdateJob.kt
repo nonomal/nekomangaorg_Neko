@@ -9,12 +9,11 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.track.TrackManager
-import eu.kanade.tachiyomi.util.system.executeOnIO
 import eu.kanade.tachiyomi.util.system.withIOContext
 import eu.kanade.tachiyomi.util.system.withNonCancellableContext
 import java.util.concurrent.TimeUnit
+import org.nekomanga.data.database.repository.TrackRepository
 import org.nekomanga.domain.track.store.DelayedTrackingStore
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.Injekt
@@ -23,14 +22,6 @@ import uy.kohesive.injekt.api.get
 class DelayedTrackingUpdateJob(context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
 
-    private data class DelayedTracking(
-        val mangaId: Long,
-        val syncId: Int,
-        val lastReadChapter: Float
-    ) {
-        fun print() = "$mangaId:$syncId:$lastReadChapter"
-    }
-
     override suspend fun doWork(): Result {
         TimberKt.d { "Starting Delayed Tracking Update Job" }
         if (runAttemptCount > 3) {
@@ -38,43 +29,49 @@ class DelayedTrackingUpdateJob(context: Context, workerParams: WorkerParameters)
         }
 
         val delayedTrackingStore = Injekt.get<DelayedTrackingStore>()
-        val db = Injekt.get<DatabaseHelper>()
+        val trackRepository = Injekt.get<TrackRepository>()
         val trackManager = Injekt.get<TrackManager>()
 
+        var hasErrors = false
+
         withIOContext {
-            delayedTrackingStore
-                .getItems()
-                .mapNotNull {
-                    val track = db.getTrackByTrackId(it.trackId).executeOnIO()
-                    if (track == null) {
-                        delayedTrackingStore.remove(it.trackId)
-                    }
-                    track?.last_chapter_read = it.lastChapterRead
-                    track
+            delayedTrackingStore.getItems().forEach { item ->
+                val track = trackRepository.getTrackById(item.trackId)
+                if (track == null) {
+                    delayedTrackingStore.remove(item.trackId)
+                    return@forEach
                 }
-                .forEach { track ->
-                    TimberKt.d {
-                        "Updating delayed track item: ${track.manga_id}, last chapter read: ${track.last_chapter_read}"
-                    }
-                    withNonCancellableContext {
-                        val service = trackManager.getService(track.sync_id)
-                        when (service == null) {
-                            true -> delayedTrackingStore.remove(track.id!!)
-                            false -> {
-                                try {
-                                    service.update(track, true)
-                                    db.insertTrack(track).executeAsBlocking()
-                                } catch (e: Exception) {
-                                    delayedTrackingStore.add(track.id!!, track.last_chapter_read)
-                                    TimberKt.e(e) { "Error inserting for delayed tracker" }
-                                }
-                            }
+                if (item.lastChapterRead <= track.last_chapter_read) {
+                    delayedTrackingStore.remove(item.trackId)
+                    return@forEach
+                }
+                track.last_chapter_read = item.lastChapterRead
+                TimberKt.d {
+                    "Updating delayed track item: ${track.manga_id}, last chapter read: ${track.last_chapter_read}"
+                }
+                withNonCancellableContext {
+                    val service = trackManager.getService(track.sync_id)
+                    if (service == null) {
+                        delayedTrackingStore.remove(item.trackId)
+                    } else {
+                        try {
+                            val updatedTrack = service.update(track, true)
+                            trackRepository.insertTrack(updatedTrack)
+                            delayedTrackingStore.remove(item.trackId)
+                        } catch (e: Exception) {
+                            hasErrors = true
+                            TimberKt.e(e) { "Error inserting for delayed tracker" }
                         }
                     }
                 }
+            }
         }
 
-        return Result.success()
+        return if (hasErrors) {
+            Result.retry()
+        } else {
+            Result.success()
+        }
     }
 
     companion object {

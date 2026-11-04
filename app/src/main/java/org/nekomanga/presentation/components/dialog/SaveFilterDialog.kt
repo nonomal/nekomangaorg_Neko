@@ -2,14 +2,14 @@ package org.nekomanga.presentation.components.dialog
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
-import androidx.compose.material.ripple.LocalRippleTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -17,12 +17,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import eu.kanade.tachiyomi.data.database.models.BrowseFilterImpl
 import jp.wasabeef.gap.Gap
 import org.nekomanga.R
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.extensions.runOnEnterKeyPressed
 import org.nekomanga.presentation.theme.Size
 
 /** Simple Dialog to save a filter */
@@ -31,7 +33,7 @@ fun SaveFilterDialog(
     themeColorState: ThemeColorState,
     currentSavedFilters: List<BrowseFilterImpl>,
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: (String) -> Unit,
 ) {
     val context = LocalContext.current
     var saveFilterText by remember { mutableStateOf("") }
@@ -39,8 +41,8 @@ fun SaveFilterDialog(
     var errorMessage by remember { mutableStateOf("") }
 
     CompositionLocalProvider(
-        LocalRippleTheme provides themeColorState.rippleTheme,
-        LocalTextSelectionColors provides themeColorState.textSelectionColors
+        LocalRippleConfiguration provides themeColorState.rippleConfiguration,
+        LocalTextSelectionColors provides themeColorState.textSelectionColors,
     ) {
         LaunchedEffect(saveFilterText, currentSavedFilters) {
             if (saveFilterText.isEmpty()) {
@@ -55,21 +57,29 @@ fun SaveFilterDialog(
             }
         }
 
+        val saveAction = {
+            if (saveEnabled) {
+                onConfirm(saveFilterText)
+                onDismiss()
+            }
+        }
+
         AlertDialog(
             title = { Text(text = stringResource(id = R.string.save_filter)) },
             text = {
                 Column {
                     OutlinedTextField(
+                        modifier = Modifier.runOnEnterKeyPressed(saveAction),
                         value = saveFilterText,
                         onValueChange = { saveFilterText = it },
                         label = { Text(text = stringResource(id = R.string.name)) },
                         singleLine = true,
                         maxLines = 1,
                         colors =
-                            TextFieldDefaults.outlinedTextFieldColors(
-                                cursorColor = themeColorState.buttonColor,
-                                focusedLabelColor = themeColorState.buttonColor,
-                                focusedBorderColor = themeColorState.buttonColor,
+                            OutlinedTextFieldDefaults.colors(
+                                cursorColor = themeColorState.primaryColor,
+                                focusedLabelColor = themeColorState.primaryColor,
+                                focusedBorderColor = themeColorState.primaryColor,
                             ),
                     )
                     Gap(Size.extraTiny)
@@ -78,20 +88,19 @@ fun SaveFilterDialog(
                         style =
                             MaterialTheme.typography.labelSmall.copy(
                                 color = MaterialTheme.colorScheme.error
-                            )
+                            ),
                     )
                 }
             },
             onDismissRequest = onDismiss,
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        onConfirm(saveFilterText)
-                        onDismiss()
-                    },
+                    onClick = saveAction,
                     enabled = saveEnabled,
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor),
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = R.string.save))
                 }
@@ -100,7 +109,9 @@ fun SaveFilterDialog(
                 TextButton(
                     onClick = onDismiss,
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor)
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = R.string.cancel))
                 }

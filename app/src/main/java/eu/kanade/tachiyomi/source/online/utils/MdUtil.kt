@@ -1,12 +1,12 @@
 package eu.kanade.tachiyomi.source.online.utils
 
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
 import kotlinx.serialization.json.Json
 import org.jsoup.parser.Parser
 import org.nekomanga.constants.MdConstants
+import org.nekomanga.domain.site.MangaDexPreferences
 
 class MdUtil {
 
@@ -42,12 +42,14 @@ class MdUtil {
                 timeZone = TimeZone.getTimeZone("UTC")
             }
 
-        val dateFormatter =
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss+SSS", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }
+        fun parseDate(dateAsString: String): Long {
+            val dateFormatter =
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss+SSS", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
 
-        fun parseDate(dateAsString: String): Long = dateFormatter.parse(dateAsString)?.time ?: 0
+            return dateFormatter.parse(dateAsString)?.time ?: 0
+        }
 
         fun cdnCoverUrl(dexId: String, fileName: String, quality: Int): String {
             val coverQualitySuffix =
@@ -59,16 +61,13 @@ class MdUtil {
             return "${MdConstants.cdnUrl}/covers/$dexId/$fileName$coverQualitySuffix"
         }
 
-        fun getLangsToShow(preferences: PreferencesHelper) =
+        fun getLangsToShow(preferences: MangaDexPreferences) =
             // this prevents langauges that don't exist anymore from causing a parse exception
-            preferences.langsToShow().get().split(",").filter {
-                MdLang.values().firstOrNull { mdLang -> it == mdLang.lang } != null
+            preferences.enabledChapterLanguages().get().filter { enabledLang ->
+                MdLang.entries.firstOrNull { mdLang -> enabledLang == mdLang.lang } != null
             }
 
-        fun getTitle(
-            titleMap: Map<String, String?>,
-            originalLanguage: String,
-        ): String {
+        fun getTitle(titleMap: Map<String, String?>, originalLanguage: String): String {
             return titleMap[MdLang.ENGLISH.lang]
                 ?: titleMap[originalLanguage]
                 ?: titleMap["$originalLanguage-ro"]

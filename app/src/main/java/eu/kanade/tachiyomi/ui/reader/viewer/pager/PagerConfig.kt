@@ -1,6 +1,5 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
-import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.ui.reader.settings.PageLayout
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerConfig
@@ -26,7 +25,7 @@ class PagerConfig(
     readerPreferences: ReaderPreferences = Injekt.get(),
 ) : ViewerConfig(preferences, readerPreferences, scope) {
 
-    var usePageTransitions = false
+    var usePageTransitions = readerPreferences.animatedPageTransitions().get()
         private set
 
     var imageScaleType = 1
@@ -38,7 +37,7 @@ class PagerConfig(
     var imageCropBorders = false
         private set
 
-    var navigateToPan = false
+    var navigateToPan = readerPreferences.navigateToPan().get()
         private set
 
     var landscapeZoom = false
@@ -87,16 +86,16 @@ class PagerConfig(
 
         readerPreferences
             .pagerNavInverted()
-            .register(
-                { tappingInverted = it },
-                { navigator.invertMode = it },
-            )
+            .register({ tappingInverted = it }, { navigator.invertMode = it })
 
         readerPreferences
             .pagerNavInverted()
             .changes()
             .drop(1)
-            .onEach { navigationModeInvertedListener?.invoke() }
+            .onEach {
+                navigator.invertMode = it
+                navigationModeInvertedListener?.invoke()
+            }
             .launchIn(scope)
 
         readerPreferences
@@ -127,24 +126,15 @@ class PagerConfig(
 
         readerPreferences
             .doublePageGap()
-            .register(
-                { doublePageGap = it },
-                { imagePropertyChangedListener?.invoke() },
-            )
+            .register({ doublePageGap = it }, { imagePropertyChangedListener?.invoke() })
 
         readerPreferences
             .doublePageRotate()
-            .register(
-                { doublePageRotate = it },
-                { imagePropertyChangedListener?.invoke() },
-            )
+            .register({ doublePageRotate = it }, { imagePropertyChangedListener?.invoke() })
 
         readerPreferences
             .doublePageRotateReverse()
-            .register(
-                { doublePageRotateReverse = it },
-                { imagePropertyChangedListener?.invoke() },
-            )
+            .register({ doublePageRotateReverse = it }, { imagePropertyChangedListener?.invoke() })
 
         readerPreferences
             .pageLayout()
@@ -161,15 +151,13 @@ class PagerConfig(
             .launchIn(scope)
         readerPreferences
             .pageLayout()
-            .register(
-                {
-                    autoDoublePages = it == PageLayout.AUTOMATIC.value
-                    if (!autoDoublePages) {
-                        doublePages = it == PageLayout.DOUBLE_PAGES.value
-                        splitPages = it == PageLayout.SPLIT_PAGES.value
-                    }
-                },
-            )
+            .register({
+                autoDoublePages = it == PageLayout.AUTOMATIC.value
+                if (!autoDoublePages) {
+                    doublePages = it == PageLayout.DOUBLE_PAGES.value
+                    splitPages = it == PageLayout.SPLIT_PAGES.value
+                }
+            })
 
         readerPreferences.automaticSplitsPage().register({ autoSplitPages = it })
         navigationOverlayForNewUser = preferences.showNavigationOverlayNewUser().get()
@@ -211,9 +199,9 @@ class PagerConfig(
 
     fun scaleTypeIsFullFit(): Boolean {
         return when (imageScaleType) {
-            SubsamplingScaleImageView.SCALE_TYPE_FIT_HEIGHT,
-            SubsamplingScaleImageView.SCALE_TYPE_SMART_FIT,
-            SubsamplingScaleImageView.SCALE_TYPE_CENTER_CROP, -> true
+            2, // Stretch
+            4, // Fit height
+            6 -> true // Smart fit
             else -> false
         }
     }
@@ -235,7 +223,7 @@ class PagerConfig(
     enum class ZoomType {
         Left,
         Center,
-        Right
+        Right,
     }
 
     companion object {

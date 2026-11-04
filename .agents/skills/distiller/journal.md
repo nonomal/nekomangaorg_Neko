@@ -1,0 +1,37 @@
+## 2026-03-30 - Extracting Library Filtering Logic 
+**Learning:** The project relies heavily on `mockk` for testing domain layers, and UI logic often tightly couples domain models with state objects before filtering. Use Cases are typically registered as singletons in `AppModule.kt` using `addSingleton()` and injected via `Injekt.get()`. 
+**Action:** Always create a `mockk` test file matching the usecase name and update `AppModule.kt` to bind the new usecase for DI.
+## 2026-04-13 - Extracting Chapter Filter Text Logic 
+**Learning:** Use Cases shouldn't be singletons if they take `Context` or require it injected unless using Dagger/Hilt correctly; alternatively, simply instantiate them where needed like `GetChapterFilterText(context)` or pass `Context` as an argument if they are kept as lightweight helper functions. 
+**Action:** If a Use Case needs Context and DI is complex, just instantiate it with the context where needed or use Hilt's `@ApplicationContext`.
+## 2026-04-13 - Extracting MarkPreviousChaptersUseCase
+**Learning:** When trying to instantiate data classes like `Chapter` or `ChapterItem` for unit testing, the implementation classes (`ChapterImpl`) can be cumbersome. The instruction "Use Mockk" implies that we should create mocks via MockK (`mockk<Chapter>()`) instead of manually instantiating or using `apply`.
+**Action:** When asked to "use MockK" for unit tests on domain layer extractions, mock the entity directly using `mockk<Type>()` and stub the fields using `every { field } returns ...` rather than spending cycles trying to find the appropriate `Impl.create().apply {}` equivalent.
+## 2026-04-13 - Extracting GetDateFormatUseCase
+**Learning:** Injekt binds components directly to the Use Case implementations using `addSingletonFactory { MyUseCase(get()) }`. Note that mocking objects correctly with MockK for unit testing requires careful attention to matching the precise signature expected by the actual class, especially when default parameters are at play, otherwise `NullPointerException` or similar mock errors will be raised.
+**Action:** When extracting Use Cases that fetch preferences with default values, be cautious about testing them without proper mock signatures and default arguments unless explicitly told to skip tests.
+## 2026-04-26 - Extracting Formatted Build Time Logic
+**Learning:** For testing formatters that rely on specific Locales, TimeZones and internal logic spanning simple format combinations (e.g. `toTimestampString()`), verifying just that it avoids the raw string fallback provides adequate coverage while avoiding flaky locale/timezone mock complications. Also, ensure Use Cases meant for DI via `addSingletonFactory { ... }` in `AppModule.kt` don't require context directly if they can just consume child UseCases like `GetDateFormatUseCase`.
+**Action:** When extracting date formatting business logic, isolate standard Java Locale or formatting dependencies directly within the Use Case and use exact timezone settings if applicable. Use `assertNotEquals(input, result)` for checking successful formatting when exact string formats depend on local system logic like `toTimestampString`.
+## 2026-04-26 - Extracting Formatted Build Time Logic Refinements
+**Learning:** For consistency with the rest of the codebase, view models use `by injectLazy()` for injecting UseCases rather than directly instantiating them using `Injekt.get()`. In domain logic dealing with standard ISO formats, relying on `Locale.US` rather than `Locale.getDefault()` ensures consistency. Additionally, non-null assertions (`!!`) should be avoided in favor of safe calls (`?.`) and fallback error handling (`?: error()`).
+**Action:** Always prefer `by injectLazy()` for ViewModel DI unless told otherwise. Ensure robust date parsing avoiding `!!` by providing safe calls and error fallbacks, and use `Locale.US` for programmatic parsing.
+## 2026-05-11 - Extracting Blocked Chapter Validation
+**Learning:** Pure domain Use Cases are typically registered as singletons in `AppModule.kt` (using `addSingleton()`) and injected via `Injekt`. However, Use Cases that require an Android `Context` should not be singletons; instead, instantiate them directly where needed or pass the `Context` as a function argument to avoid leaks.
+**Action:** When extracting business logic into Use Cases, keep them pure without Android dependencies to make DI simple and safe.
+
+## 2026-06-04 - Unifying Smart Library Update Restrictions
+**Learning:** The project relies on `ShouldUpdateMangaUseCase` to coordinate smart library update filtering across both background sync `LibraryUpdateJob` and frontend `StatsViewModel`. Use Cases are registered via `addSingleton(...)` in `AppModule.kt`. 
+**Action:** When working on library update features or tracking-status matching, reuse `ShouldUpdateMangaUseCase` and fetch restrictions from `libraryPreferences.autoUpdateMangaRestrictions()` rather than incorrect device restriction keys.
+
+## 2026-06-09 - Extracting AutoAddTrackers Use Case
+**Learning:** The project wraps tracking results in a custom `TrackingUpdate` sealed class (`Success` / `Error`). For DI, tracking use cases are nested inside a central `TrackUseCases` class which is registered as a singleton `addSingleton(TrackUseCases())` in `AppModule.kt`. Use Case naming typically uses verb phrases (e.g. `RegisterTracking`).
+**Action:** When creating new tracking domain logic, nest the Use Case in `TrackUseCases` and use verb phrases for naming.
+
+## 2026-06-30 - Extracting ToggleMangaFavorite Use Case
+**Learning:** Duplicate business logic for toggling favorites and setting categories across Browse, Display, and Similar ViewModels can be unified into a single Use Case. By using a lambda/callback `categoriesProvider` to dynamically fetch screen-specific categories, we avoid exposing mutable screen states to the domain layer while keeping the Use Case pure and highly testable.
+**Action:** When extracting favorite or bookmark toggling logic from view models, consolidate them in the `manga` use cases folder and resolve circular dependencies by passing child Use Cases directly in the constructor.
+
+## 2026-09-09 - Extracting CalculateDexFilter Use Case
+**Learning:** Complex filter transformation logic in `BrowseViewModel` handling MangaDex query parameters and filter variants can be decoupled into a pure domain `CalculateDexFilterUseCase` without UI state side effects. On this development host, binary transforms like AAPT2 cannot execute through CLI Gradle tasks due to the dynamic linker environment, so avoid running host/nix troubleshooting commands and rely on standard Kotlin formatting (`./gradlew ktfmtFormat`) and IDE/CI for build pipeline verification.
+**Action:** Extract filter state calculations into pure domain Use Cases registered as singletons in `AppModule.kt`, keep all git modifications unstaged, and do not attempt to run or inspect nix system commands.

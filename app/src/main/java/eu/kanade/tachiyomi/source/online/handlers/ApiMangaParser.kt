@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.source.online.handlers
 import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.Result
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.model.MangaTag
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -21,22 +20,19 @@ import org.nekomanga.constants.Constants
 import org.nekomanga.constants.MdConstants
 import org.nekomanga.domain.manga.Stats
 import org.nekomanga.domain.network.ResultError
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.injectLazy
 
 class ApiMangaParser {
     val network: NetworkHelper by injectLazy()
-    val preferencesHelper: PreferencesHelper by injectLazy()
+    val mangaDexPreferences: MangaDexPreferences by injectLazy()
 
     /** Parse the manga details json into manga object */
-    fun mangaDetailsParse(
-        mangaDto: MangaDataDto,
-        stats: Stats,
-        simpleChapters: List<String>
-    ): Result<SManga, ResultError> {
+    fun mangaDetailsParse(mangaDto: MangaDataDto, stats: Stats): Result<SManga, ResultError> {
         try {
             val mangaAttributesDto = mangaDto.attributes
-            val manga = mangaDto.toBasicManga(preferencesHelper.thumbnailQuality().get())
+            val manga = mangaDto.toBasicManga(mangaDexPreferences.coverQuality().get())
 
             manga.rating = stats.rating
             manga.users = stats.follows
@@ -47,19 +43,25 @@ class ApiMangaParser {
 
             manga.author =
                 mangaDto.relationships
-                    .filter { relationshipDto ->
-                        relationshipDto.type.equals(MdConstants.Types.author, true)
+                    .mapNotNull { relationshipDto ->
+                        if (relationshipDto.type.equals(MdConstants.Types.author, true)) {
+                            relationshipDto.attributes?.name
+                        } else {
+                            null
+                        }
                     }
-                    .mapNotNull { it.attributes!!.name }
                     .distinct()
                     .joinToString(Constants.SEPARATOR)
 
             manga.artist =
                 mangaDto.relationships
-                    .filter { relationshipDto ->
-                        relationshipDto.type.equals(MdConstants.Types.artist, true)
+                    .mapNotNull { relationshipDto ->
+                        if (relationshipDto.type.equals(MdConstants.Types.artist, true)) {
+                            relationshipDto.attributes?.name
+                        } else {
+                            null
+                        }
                     }
-                    .mapNotNull { it.attributes!!.name }
                     .distinct()
                     .joinToString(Constants.SEPARATOR)
 
@@ -70,6 +72,8 @@ class ApiMangaParser {
             manga.lang_flag = mangaAttributesDto.originalLanguage
             val lastChapter = mangaAttributesDto.lastChapter?.toFloatOrNull()
             lastChapter?.let { manga.last_chapter_number = floor(it).toInt() }
+            val lastVolume = mangaAttributesDto.lastVolume?.toIntOrNull()
+            manga.last_volume_number = lastVolume
 
             val otherUrls = mutableListOf<String>()
             mangaAttributesDto.links?.asMdMap<String>()?.let { linkMap ->
@@ -89,15 +93,7 @@ class ApiMangaParser {
                 manga.other_urls = otherUrls.joinToString("||")
             }
 
-            val tempStatus = parseStatus(mangaAttributesDto.status ?: "")
-            val publishedOrCancelled =
-                (tempStatus == SManga.PUBLICATION_COMPLETE || tempStatus == SManga.CANCELLED)
-            if (publishedOrCancelled && simpleChapters.contains(mangaAttributesDto.lastChapter)) {
-                manga.status = SManga.COMPLETED
-                manga.missing_chapters = null
-            } else {
-                manga.status = tempStatus
-            }
+            manga.status = parseStatus(mangaAttributesDto.status ?: "")
 
             val tempContentRating = mangaAttributesDto.contentRating?.capitalized()
 
@@ -108,16 +104,19 @@ class ApiMangaParser {
                     "Content rating: " + tempContentRating.capitalized()
                 }
 
-            val genres =
-                (listOf(mangaAttributesDto.publicationDemographic?.capitalized()) +
-                        mangaAttributesDto.tags
-                            .map { it.id }
-                            .map { dexTagId ->
-                                MangaTag.values().firstOrNull { tag -> tag.uuid == dexTagId }
-                            }
-                            .map { tag -> tag?.prettyPrint } +
-                        listOf(contentRating))
-                    .filterNotNull()
+            val genres = buildList {
+                add(mangaAttributesDto.publicationDemographic?.capitalized())
+                addAll(
+                    mangaAttributesDto.tags
+                        .map { it.id }
+                        .map { dexTagId ->
+                            MangaTag.entries.firstOrNull { tag -> tag.uuid == dexTagId }
+                        }
+                        .map { tag -> tag?.prettyPrint }
+                )
+                add(contentRating)
+            }
+                .filterNotNull()
 
             manga.genre = genres.joinToString(", ")
 
@@ -139,17 +138,27 @@ class ApiMangaParser {
 
     fun chapterListParse(
         lastChapterNumber: Int?,
+        lastVolumeNumber: Int?,
         chapterListResponse: List<ChapterDataDto>,
         groupMap: Map<String, String>,
+        uploaderMap: Map<String, String>,
     ): Result<List<SChapter>, ResultError> {
         return runCatching {
-                Ok(
-                    chapterListResponse
-                        .asSequence()
-                        .map { mapChapter(it, lastChapterNumber, groupMap) }
-                        .toList(),
-                )
-            }
+            Ok(
+                chapterListResponse
+                    .asSequence()
+                    .mapNotNull {
+                        mapChapter(
+                            it,
+                            lastChapterNumber,
+                            lastVolumeNumber,
+                            groupMap,
+                            uploaderMap,
+                        )
+                    }
+                    .toList()
+            )
+        }
             .getOrElse {
                 val msg = "Exception parsing chapters"
                 TimberKt.e(it) { msg }
@@ -160,33 +169,52 @@ class ApiMangaParser {
     private fun mapChapter(
         networkChapter: ChapterDataDto,
         lastChapterNumber: Int?,
+        lastVolumeNumber: Int?,
         groups: Map<String, String>,
-    ): SChapter {
+        uploaders: Map<String, String>,
+    ): SChapter? {
         val chapter = SChapter.create()
         val attributes = networkChapter.attributes
         chapter.url = MdConstants.chapterSuffix + networkChapter.id
 
-        chapter.name = networkChapter.buildChapterName(chapter, lastChapterNumber)
+        chapter.name = networkChapter.buildChapterName(chapter, lastChapterNumber, lastVolumeNumber)
         // Convert from unix time
 
         chapter.date_upload = MdUtil.parseDate(attributes.readableAt)
 
         val scanlatorName =
             networkChapter.relationships
-                .filter { it.type == MdConstants.Types.scanlator }
-                .mapNotNull { groups[it.id] }
+                .mapNotNull {
+                    if (it.type == MdConstants.Types.scanlator) {
+                        groups[it.id]
+                    } else {
+                        null
+                    }
+                }
                 .toMutableSet()
 
-        if (scanlatorName.contains("no group") || scanlatorName.isEmpty()) {
-            scanlatorName.remove("no group")
-            scanlatorName.add("No Group")
+        val uploaderName =
+            networkChapter.relationships.firstNotNullOfOrNull { relationship ->
+                if (relationship.type == MdConstants.Types.uploader) {
+                    uploaders[relationship.id]
+                } else {
+                    null
+                }
+            }
+
+        if (scanlatorName.isEmpty()) {
+            scanlatorName.add(Constants.NO_GROUP)
         }
 
         chapter.scanlator = MdUtil.cleanString(ChapterUtil.getScanlatorString(scanlatorName))
 
+        chapter.uploader = uploaderName ?: ""
+
         chapter.mangadex_chapter_id = MdUtil.getChapterUUID(chapter.url)
 
         chapter.language = attributes.translatedLanguage
+
+        chapter.isUnavailable = attributes.isUnavailable ?: return null
 
         return chapter
     }
@@ -194,14 +222,15 @@ class ApiMangaParser {
 
 fun ChapterDataDto.buildChapterName(
     chapter: SChapter? = null,
-    lastChapterNumber: Int? = null
+    lastChapterNumber: Int? = null,
+    lastVolumeNumber: Int? = null,
 ): String {
     val chapterName = mutableListOf<String>()
     // Build chapter name
 
     if (attributes.volume != null) {
         chapterName.add("Vol.${attributes.volume}")
-        chapter?.vol = attributes.volume.toString()
+        chapter?.vol = attributes.volume
     }
 
     if (!attributes.chapter.isNullOrBlank()) {
@@ -214,7 +243,7 @@ fun ChapterDataDto.buildChapterName(
         if (chapterName.isNotEmpty()) {
             chapterName.add("-")
         }
-        chapterName.add(attributes.title!!)
+        attributes.title?.let { chapterName.add(it) }
         chapter?.chapter_title = MdUtil.cleanString(attributes.title)
     }
 
@@ -222,7 +251,17 @@ fun ChapterDataDto.buildChapterName(
     if (chapterName.isEmpty()) {
         chapterName.add("Oneshot")
     }
-    if (lastChapterNumber != null && attributes.chapter == lastChapterNumber.toString()) {
+
+    val sameVolume =
+        attributes.volume == null ||
+            lastVolumeNumber == null ||
+            attributes.volume == lastVolumeNumber.toString()
+
+    if (
+        lastChapterNumber != null &&
+            attributes.chapter == lastChapterNumber.toString() &&
+            sameVolume
+    ) {
         chapterName.add("[END]")
     }
 

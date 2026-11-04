@@ -6,9 +6,7 @@ import com.skydoves.sandwich.getOrThrow
 import com.skydoves.sandwich.onError
 import com.skydoves.sandwich.onFailure
 import com.skydoves.sandwich.retrofit.statusCode
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.MangaSimilar
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.network.services.NetworkServices
 import eu.kanade.tachiyomi.source.online.models.dto.AnilistMangaRecommendationsDto
 import eu.kanade.tachiyomi.source.online.models.dto.MUMangaDto
@@ -24,26 +22,25 @@ import eu.kanade.tachiyomi.util.log
 import eu.kanade.tachiyomi.util.manga.MangaMappings
 import eu.kanade.tachiyomi.util.system.withIOContext
 import eu.kanade.tachiyomi.util.throws
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.nekomanga.constants.MdConstants
 import org.nekomanga.core.network.ProxyRetrofitQueryMap
+import org.nekomanga.data.database.repository.SimilarRepository
 import org.nekomanga.domain.manga.SourceManga
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.injectLazy
 
 class SimilarHandler {
 
     private val networkServices: NetworkServices by injectLazy()
-    private val db: DatabaseHelper by injectLazy()
+    private val similarRepository: SimilarRepository by injectLazy()
     private val mappings: MangaMappings by injectLazy()
-    private val preferencesHelper: PreferencesHelper by injectLazy()
+    private val mangaDexPreferences: MangaDexPreferences by injectLazy()
+
     private val json: Json by injectLazy()
 
-    suspend fun fetchRelated(
-        dexId: String,
-        forceRefresh: Boolean,
-    ): List<SourceManga> {
+    suspend fun fetchRelated(dexId: String, forceRefresh: Boolean): List<SourceManga> {
         if (forceRefresh) {
             val related = withIOContext {
                 networkServices.service
@@ -61,24 +58,60 @@ class SimilarHandler {
                     }
                     .toMap()
 
-            val mangaList = similarGetMangadexMangaList(mangaIdMap.keys.toList(), false)
+            val mangaList = getMangadexMangaList(mangaIdMap.keys.toList(), false)
 
-            val thumbQuality = preferencesHelper.thumbnailQuality().get()
+            val thumbQuality = mangaDexPreferences.coverQuality().get()
             val relatedMangaList =
                 mangaList.data.map { it.toRelatedMangaDto(thumbQuality, mangaIdMap[it.id] ?: "") }
 
             // Update the Manga Similar database
-            val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+            val mangaDb = similarRepository.getSimilar(dexId)
             val dbDto = getDbDto(mangaDb)
             dbDto.relatedManga = relatedMangaList
             insertMangaSimilar(dexId, dbDto, mangaDb)
         }
 
-        val dbDto = getDbDto(db.getSimilar(dexId).executeAsBlocking())
+        val dbDto = getDbDto(similarRepository.getSimilar(dexId))
         return dbDto.relatedManga?.map { it.toSourceManga() } ?: emptyList()
     }
 
-    private fun insertMangaSimilar(
+    suspend fun fetchRecommended(dexId: String, forceRefresh: Boolean): List<SourceManga> {
+        if (forceRefresh) {
+            val recommended = withIOContext {
+                networkServices.service
+                    .recommendedManga(dexId)
+                    .onFailure { TimberKt.e { "trying to get recommended manga, $this" } }
+                    .getOrNull()
+            }
+            recommended ?: return emptyList()
+
+            val mangaIdMap =
+                recommended.data
+                    .mapNotNull {
+                        if (it.relationships.isEmpty()) return@mapNotNull null
+                        it.relationships.last().id to it.attributes.score
+                    }
+                    .toMap()
+            val mangaList = getMangadexMangaList(mangaIdMap.keys.toList(), false)
+            val thumbQuality = mangaDexPreferences.coverQuality().get()
+            val recommendedMangaList =
+                mangaList.data
+                    .sortedByDescending { mangaIdMap[it.id] }
+                    .map { it.toRelatedMangaDto(thumbQuality, "") }
+
+            // Update the Manga Similar database
+            val mangaDb = similarRepository.getSimilar(dexId)
+            val dbDto = getDbDto(mangaDb)
+            dbDto.recommendedManga = recommendedMangaList
+            insertMangaSimilar(dexId, dbDto, mangaDb)
+        }
+
+        val dbDto = getDbDto(similarRepository.getSimilar(dexId))
+
+        return dbDto.recommendedManga?.map { it.toSourceManga() } ?: emptyList()
+    }
+
+    private suspend fun insertMangaSimilar(
         dexId: String,
         dbDto: SimilarMangaDatabaseDto,
         mangaDb: MangaSimilar?,
@@ -92,13 +125,13 @@ class SimilarHandler {
                 data = similarDatabaseDtoString
             }
 
-        db.insertSimilar(mangaSimilar).executeAsBlocking()
+        similarRepository.insertSimilar(mangaSimilar)
     }
 
     private fun getDbDto(mangaDb: MangaSimilar?): SimilarMangaDatabaseDto {
         return runCatching {
-                MdUtil.jsonParser.decodeFromString<SimilarMangaDatabaseDto>(mangaDb!!.data)
-            }
+            MdUtil.jsonParser.decodeFromString<SimilarMangaDatabaseDto>(mangaDb!!.data)
+        }
             .getOrElse { SimilarMangaDatabaseDto() }
     }
 
@@ -115,19 +148,11 @@ class SimilarHandler {
         otherText: String,
     ): RelatedMangaDto {
         val manga = this.toBasicManga(thumbQuality)
-        return RelatedMangaDto(
-            manga.url,
-            manga.title,
-            manga.thumbnail_url!!,
-            otherText,
-        )
+        return RelatedMangaDto(manga.url, manga.title, manga.thumbnail_url!!, otherText)
     }
 
     /** fetch our similar mangaList */
-    suspend fun fetchSimilar(
-        dexId: String,
-        forceRefresh: Boolean,
-    ): List<SourceManga> {
+    suspend fun fetchSimilar(dexId: String, forceRefresh: Boolean): List<SourceManga> {
         if (forceRefresh) {
             val response =
                 networkServices.similarService
@@ -148,23 +173,27 @@ class SimilarHandler {
             similarMangaParse(dexId, dto)
         }
 
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         // Get data from db
         return dbDto.similarManga
             ?.map { it.toSourceManga() }
-            ?.sortedByDescending { it.displayText.split("%")[0].toDouble() } ?: emptyList()
+            ?.sortedByDescending {
+                val double = it.displayText.split("%")[0].toDoubleOrNull()
+                if (double == null) {
+                    TimberKt.e {
+                        "NumberFormatIssue this should be a double ${it.displayText.split("%")[0]} for manga ${it.title} ${it.title} ${it.displayText}"
+                    }
+                }
+                double
+            } ?: emptyList()
     }
 
-    private suspend fun similarMangaParse(
-        dexId: String,
-        similarDto: SimilarMangaDto?,
-    ) {
+    private suspend fun similarMangaParse(dexId: String, similarDto: SimilarMangaDto?) {
         similarDto ?: return
 
         // Get our page of mangaList
-        // TODO: We should also remove any that have a bad language here
-        val activeLangs = MdUtil.getLangsToShow(preferencesHelper)
+        val activeLangs = MdUtil.getLangsToShow(mangaDexPreferences)
         val idPairs =
             similarDto.matches
                 .mapNotNull {
@@ -180,20 +209,20 @@ class SimilarHandler {
                     }
                 }
                 .toMap()
-        if (idPairs.isEmpty()) {
-            return
-        }
+        val filteredIdPairs = idPairs.filterKeys { it != dexId }
+        if (filteredIdPairs.isEmpty()) return
 
-        val mangaListDto = similarGetMangadexMangaList(idPairs.mapNotNull { it.key }, false)
+        val mangaListDto = getMangadexMangaList(filteredIdPairs.mapNotNull { it.key }, false)
 
         // Convert to lookup array
-        // TODO: Also filter out manga here that are already presented
-        val thumbQuality = preferencesHelper.thumbnailQuality().get()
+        val thumbQuality = mangaDexPreferences.coverQuality().get()
         val mangaList =
-            mangaListDto.data.map { it.toRelatedMangaDto(thumbQuality, idPairs[it.id] ?: "") }
+            mangaListDto.data.map {
+                it.toRelatedMangaDto(thumbQuality, filteredIdPairs[it.id] ?: "")
+            }
 
         // update db
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         dbDto.similarApi = similarDto
         dbDto.similarManga = mangaList
@@ -201,10 +230,7 @@ class SimilarHandler {
     }
 
     /** fetch our similar mangaList from external service Anilist */
-    suspend fun fetchAnilist(
-        dexId: String,
-        forceRefresh: Boolean,
-    ): List<SourceManga> {
+    suspend fun fetchAnilist(dexId: String, forceRefresh: Boolean): List<SourceManga> {
         // See if we have a valid mapping for our Anlist service
         val anilistId = mappings.getExternalID(dexId, "al") ?: return emptyList()
 
@@ -229,7 +255,7 @@ class SimilarHandler {
             anilistRecommendationParse(dexId, response)
         }
 
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         // Get data from db
         return dbDto.aniListManga
@@ -262,14 +288,14 @@ class SimilarHandler {
             return
         }
 
-        val mangaListDto = similarGetMangadexMangaList(idPairs.mapNotNull { it.key }, false)
+        val mangaListDto = getMangadexMangaList(idPairs.mapNotNull { it.key }, false)
 
-        val thumbQuality = preferencesHelper.thumbnailQuality().get()
+        val thumbQuality = mangaDexPreferences.coverQuality().get()
         val mangaList =
             mangaListDto.data.map { it.toRelatedMangaDto(thumbQuality, idPairs[it.id] ?: "") }
 
         // update db
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         dbDto.aniListApi = similarDto
         dbDto.aniListManga = mangaList
@@ -302,7 +328,7 @@ class SimilarHandler {
             similarMangaExternalMalParse(dexId, response)
         }
 
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         // Get data from db
         return dbDto.myAnimeListManga
@@ -324,20 +350,20 @@ class SimilarHandler {
                 val text = it.votes.toString() + " user votes"
                 id to text
             }
-        if (idPairs.isEmpty()) {
-            return
-        }
+        val filteredIdPairs = idPairs.filterKeys { it != dexId }
+        if (filteredIdPairs.isEmpty()) return
 
-        val mangaListDto = similarGetMangadexMangaList(idPairs.mapNotNull { it.key }, false)
+        val mangaListDto = getMangadexMangaList(filteredIdPairs.mapNotNull { it.key }, false)
 
         // Convert to lookup array
-        // TODO: Also filter out manga here that are already presented
-        val thumbQuality = preferencesHelper.thumbnailQuality().get()
+        val thumbQuality = mangaDexPreferences.coverQuality().get()
         val mangaList =
-            mangaListDto.data.map { it.toRelatedMangaDto(thumbQuality, idPairs[it.id] ?: "") }
+            mangaListDto.data.map {
+                it.toRelatedMangaDto(thumbQuality, filteredIdPairs[it.id] ?: "")
+            }
 
         // update db
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         dbDto.myAnimelistApi = similarDto
         dbDto.myAnimeListManga = mangaList
@@ -369,7 +395,7 @@ class SimilarHandler {
                     .getOrNull()
             similarMangaExternalMUParse(dexId, response)
         }
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         // Get data from db
         return dbDto.mangaUpdatesListManga
@@ -382,10 +408,7 @@ class SimilarHandler {
             } ?: emptyList()
     }
 
-    private suspend fun similarMangaExternalMUParse(
-        dexId: String,
-        similarDto: MUMangaDto?,
-    ) {
+    private suspend fun similarMangaExternalMUParse(dexId: String, similarDto: MUMangaDto?) {
         // Error check http response
         similarDto ?: return
 
@@ -404,20 +427,20 @@ class SimilarHandler {
                 val text = "Similar"
                 id to text
             }
-        if (idPairs.isEmpty()) {
-            return
-        }
+        val filteredIdPairs = idPairs.filterKeys { it != dexId }
+        if (filteredIdPairs.isEmpty()) return
 
-        val mangaListDto = similarGetMangadexMangaList(idPairs.mapNotNull { it.key }, false)
+        val mangaListDto = getMangadexMangaList(filteredIdPairs.mapNotNull { it.key }, false)
 
         // Convert to lookup array
-        // TODO: Also filter out manga here that are already presented
-        val thumbQuality = preferencesHelper.thumbnailQuality().get()
+        val thumbQuality = mangaDexPreferences.coverQuality().get()
         val mangaList =
-            mangaListDto.data.map { it.toRelatedMangaDto(thumbQuality, idPairs[it.id] ?: "") }
+            mangaListDto.data.map {
+                it.toRelatedMangaDto(thumbQuality, filteredIdPairs[it.id] ?: "")
+            }
 
         // update db
-        val mangaDb = db.getSimilar(dexId).executeAsBlocking()
+        val mangaDb = similarRepository.getSimilar(dexId)
         val dbDto = getDbDto(mangaDb)
         dbDto.mangaUpdatesApi = similarDto
         dbDto.mangaUpdatesListManga = mangaList
@@ -425,7 +448,7 @@ class SimilarHandler {
     }
 
     /** this will get the manga objects with cover_art for all the specified ids */
-    private suspend fun similarGetMangadexMangaList(
+    private suspend fun getMangadexMangaList(
         mangaIds: List<String>,
         strictMatch: Boolean = true,
     ): MangaListDto {
@@ -438,7 +461,7 @@ class SimilarHandler {
                         MdConstants.ContentRating.safe,
                         MdConstants.ContentRating.suggestive,
                         MdConstants.ContentRating.erotica,
-                        MdConstants.ContentRating.pornographic
+                        MdConstants.ContentRating.pornographic,
                     ),
             )
         val responseBody =

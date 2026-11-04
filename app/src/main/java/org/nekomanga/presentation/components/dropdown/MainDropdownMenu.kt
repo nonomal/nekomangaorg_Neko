@@ -2,135 +2,100 @@ package org.nekomanga.presentation.components.dropdown
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.ripple.LocalRippleTheme
 import androidx.compose.material3.DropdownMenuItem as MaterialDropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.unit.DpOffset
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.PopupProperties
-import androidx.core.graphics.ColorUtils
-import com.mikepenz.iconics.compose.Image
-import com.mikepenz.iconics.typeface.library.community.material.CommunityMaterial
-import eu.kanade.presentation.components.Divider
-import me.saket.cascade.CascadeDropdownMenu
+import androidx.compose.ui.graphics.vector.ImageVector
 import org.nekomanga.R
+import org.nekomanga.presentation.components.Divider
 import org.nekomanga.presentation.components.NekoColors
-import org.nekomanga.presentation.components.UiIcon
 import org.nekomanga.presentation.components.UiText
-import org.nekomanga.presentation.screens.defaultThemeColorState
+import org.nekomanga.presentation.components.icons.IncognitoIcon
+import org.nekomanga.presentation.components.icons.IncognitoOffIcon
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.components.theme.defaultThemeColorState
 import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun MainDropdownMenu(
+    themeColorState: ThemeColorState = defaultThemeColorState(),
     expanded: Boolean,
     incognitoModeEnabled: Boolean,
     incognitoModeClick: () -> Unit,
     settingsClick: () -> Unit,
     statsClick: () -> Unit,
     aboutClick: () -> Unit,
-    helpClick: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val background = MaterialTheme.colorScheme.background
-    val secondary = MaterialTheme.colorScheme.secondary
-    val backgroundArgb = remember {
-        ColorUtils.blendARGB(
-            background.toArgb(),
-            secondary.toArgb(),
-            0.05f,
-        )
-    }
-    MaterialTheme(
-        colorScheme = MaterialTheme.colorScheme.copy(surface = MaterialTheme.colorScheme.surface),
-        shapes = MaterialTheme.shapes.copy(extraSmall = RoundedCornerShape(16.dp)),
-    ) {
-        CompositionLocalProvider(LocalRippleTheme provides (defaultThemeColorState().rippleTheme)) {
-            CascadeDropdownMenu(
-                expanded = expanded,
-                offset = DpOffset(12.dp, Size.none),
-                fixedWidth = 250.dp,
-                properties = PopupProperties(),
-                onDismissRequest = onDismiss,
-            ) {
-                val (incognitoText, incognitoIcon) =
-                    when (incognitoModeEnabled) {
-                        true ->
-                            R.string.turn_off_incognito_mode to
-                                CommunityMaterial.Icon2.cmd_incognito_off
-                        false ->
-                            R.string.turn_on_incognito_mode to CommunityMaterial.Icon2.cmd_incognito
-                    }
 
-                Row(
+    val menuItems =
+        remember(incognitoModeEnabled) {
+            val (incognitoText, incognitoIcon) =
+                if (incognitoModeEnabled) {
+                    R.string.turn_off_incognito_mode to IncognitoOffIcon
+                } else {
+                    R.string.turn_on_incognito_mode to IncognitoIcon
+                }
+
+            listOf(
+                DropdownMenuItem(
                     title = UiText.StringResource(incognitoText),
-                    subTitle = UiText.StringResource(R.string.pauses_reading_history),
-                    icon = UiIcon.IIcon(incognitoIcon),
+                    subtitle = UiText.StringResource(R.string.pauses_reading_history),
+                    icon = incognitoIcon,
                     onClick = incognitoModeClick,
-                    onDismiss = onDismiss,
-                )
-                Divider()
-                Row(
+                ),
+                DropdownMenuItem(
                     title = UiText.StringResource(R.string.settings),
-                    icon = UiIcon.Icon(Icons.Outlined.Settings),
+                    icon = Icons.Outlined.Settings,
                     onClick = settingsClick,
-                    onDismiss = onDismiss,
-                )
-                Row(
+                ),
+                DropdownMenuItem(
                     title = UiText.StringResource(R.string.stats),
-                    icon = UiIcon.Icon(Icons.Outlined.QueryStats),
+                    icon = Icons.Outlined.QueryStats,
                     onClick = statsClick,
-                    onDismiss = onDismiss,
-                )
-                Row(
+                ),
+                DropdownMenuItem(
                     title = UiText.StringResource(R.string.about),
-                    icon = UiIcon.Icon(Icons.Outlined.Info),
+                    icon = Icons.Outlined.Info,
                     onClick = aboutClick,
-                    onDismiss = onDismiss,
-                )
-                Row(
-                    title = UiText.StringResource(R.string.help),
-                    icon = UiIcon.Icon(Icons.Outlined.HelpOutline),
-                    onClick = helpClick,
-                    onDismiss = onDismiss,
-                )
+                ),
+            )
+        }
+
+    NekoDropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        themeColorState = themeColorState,
+    ) {
+        menuItems.forEachIndexed { index, item ->
+            Row(title = item.title, subTitle = item.subtitle, icon = item.icon) {
+                item.onClick()
+                onDismiss()
+            }
+            if (index == 0) {
+                Divider()
             }
         }
     }
 }
 
 @Composable
-private fun Row(
-    title: UiText,
-    subTitle: UiText? = null,
-    icon: UiIcon,
-    onClick: () -> Unit,
-    onDismiss: () -> Unit
-) {
+private fun Row(title: UiText, subTitle: UiText? = null, icon: ImageVector, onClick: () -> Unit) {
     MaterialDropdownMenuItem(
         text = {
             Column {
                 Text(
                     text = title.asString(),
-                    style =
-                        MaterialTheme.typography.bodyMedium.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                            letterSpacing = (-.5).sp
-                        )
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
                 if (subTitle != null) {
                     Text(
@@ -140,33 +105,20 @@ private fun Row(
                                 color =
                                     MaterialTheme.colorScheme.onSurface.copy(
                                         alpha = NekoColors.mediumAlphaLowContrast
-                                    ),
-                                letterSpacing = (-.5).sp
+                                    )
                             ),
                     )
                 }
             }
         },
         leadingIcon = {
-            when (icon) {
-                is UiIcon.Icon ->
-                    Icon(
-                        imageVector = icon.icon,
-                        modifier = Modifier.size(24.dp),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
-                is UiIcon.IIcon ->
-                    Image(
-                        asset = icon.icon,
-                        modifier = Modifier.size(24.dp),
-                        colorFilter = ColorFilter.tint(color = MaterialTheme.colorScheme.onSurface)
-                    )
-            }
+            Icon(
+                imageVector = icon,
+                modifier = Modifier.size(Size.large),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
         },
-        onClick = {
-            onClick()
-            onDismiss()
-        },
+        onClick = onClick,
     )
 }

@@ -2,12 +2,10 @@ package eu.kanade.tachiyomi.data.cache
 
 import android.content.Context
 import android.text.format.Formatter
-import coil.imageLoader
-import coil.memory.MemoryCache
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
+import coil3.imageLoader
+import coil3.memory.MemoryCache
+import eu.kanade.tachiyomi.data.coil.CoilDiskCache
 import eu.kanade.tachiyomi.data.database.models.Manga
-import eu.kanade.tachiyomi.data.image.coil.CoilDiskCache
-import eu.kanade.tachiyomi.util.system.executeOnIO
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.withIOContext
 import eu.kanade.tachiyomi.util.system.withUIContext
@@ -18,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.nekomanga.R
+import org.nekomanga.data.database.repository.MangaRepository
 import org.nekomanga.logging.TimberKt
 import tachiyomi.core.util.storage.DiskUtil
 import uy.kohesive.injekt.Injekt
@@ -28,27 +27,29 @@ import uy.kohesive.injekt.api.get
  * are created with the md5 of the thumbnail URL.
  *
  * @param context the application context.
+ * @param maxOnlineCacheSize the size in bytes that [deleteCachedCovers] trims online covers to.
  * @constructor creates an instance of the cover cache.
  */
-class CoverCache(val context: Context) {
+class CoverCache(
+    val context: Context,
+    private val maxOnlineCacheSize: Long = MAX_ONLINE_CACHE_SIZE,
+) {
 
     companion object {
         private const val COVERS_DIR = "covers"
         private const val CUSTOM_COVERS_DIR = "covers/custom"
         private const val ONLINE_COVERS_DIR = "online_covers"
+        private const val MAX_ONLINE_CACHE_SIZE = 1024L * 1024L * 1024L // 1 GB
     }
 
     /** Cache directory used for cache management. */
-    private val cacheDir = getCacheDir(COVERS_DIR)
+    val cacheDir = getCacheDir(COVERS_DIR)
 
     /** Cache directory used for custom cover cache management. */
-    private val customCoverCacheDir = getCacheDir(CUSTOM_COVERS_DIR)
+    val customCoverCacheDir = getCacheDir(CUSTOM_COVERS_DIR)
 
     /** Cache directory used for covers not in library management. */
-    private val onlineCoverDirectory =
-        File(context.cacheDir, ONLINE_COVERS_DIR).also { it.mkdirs() }
-
-    private val maxOnlineCacheSize = 50L * 1024L * 1024L // 50 MB
+    val onlineCoverDirectory = File(context.cacheDir, ONLINE_COVERS_DIR).also { it.mkdirs() }
 
     private var lastClean = 0L
 
@@ -58,7 +59,7 @@ class CoverCache(val context: Context) {
      */
     private val renewInterval = TimeUnit.HOURS.toMillis(1)
 
-    fun getChapterCacheSize(): String {
+    fun getCoverCacheSize(): String {
         return Formatter.formatFileSize(context, DiskUtil.getDirectorySize(cacheDir))
     }
 
@@ -67,10 +68,10 @@ class CoverCache(val context: Context) {
     }
 
     suspend fun deleteOldCovers() {
-        val db = Injekt.get<DatabaseHelper>()
+        val mangaRepository = Injekt.get<MangaRepository>()
         var deletedSize = 0L
         val urls =
-            db.getFavoriteMangaList().executeOnIO().mapNotNull {
+            mangaRepository.getFavoriteMangaList().mapNotNull {
                 it.thumbnail_url?.let { url ->
                     return@mapNotNull DiskUtil.hashKeyForDisk(url)
                 }
@@ -87,10 +88,7 @@ class CoverCache(val context: Context) {
 
         withUIContext {
             context.toast(
-                context.getString(
-                    R.string.deleted_,
-                    Formatter.formatFileSize(context, deletedSize),
-                ),
+                context.getString(R.string.deleted_, Formatter.formatFileSize(context, deletedSize))
             )
         }
     }
@@ -107,16 +105,30 @@ class CoverCache(val context: Context) {
         }
         withContext(Dispatchers.Main) {
             context.toast(
-                context.getString(
-                    R.string.deleted_,
-                    Formatter.formatFileSize(context, deletedSize),
-                ),
+                context.getString(R.string.deleted_, Formatter.formatFileSize(context, deletedSize))
             )
         }
         context.imageLoader.memoryCache?.clear()
         CoilDiskCache.get(context).clear()
 
         lastClean = System.currentTimeMillis()
+    }
+
+    /** Clear out custom covers */
+    suspend fun deleteAllCustomCachedCovers() {
+        val directory = customCoverCacheDir
+        var deletedSize = 0L
+        val files = directory.listFiles()?.sortedBy { it.lastModified() }?.iterator() ?: return
+        while (files.hasNext()) {
+            val file = files.next()
+            deletedSize += file.length()
+            file.delete()
+        }
+        withContext(Dispatchers.Main) {
+            context.toast(
+                context.getString(R.string.deleted_, Formatter.formatFileSize(context, deletedSize))
+            )
+        }
     }
 
     /** Clear out online covers until its under a certain size */
@@ -130,11 +142,17 @@ class CoverCache(val context: Context) {
                         return@withIOContext
                     }
                     var deletedSize = 0L
+                    // Read each timestamp once. Sorting on lastModified() reads it again for every
+                    // comparison, and MangaCoverFetcher updates the timestamp of a cover it loads,
+                    // so a cover loaded during the sort can make the sort throw.
                     val files =
-                        directory.listFiles()?.sortedBy { it.lastModified() }?.iterator()
-                            ?: return@withIOContext
+                        directory
+                            .listFiles()
+                            ?.map { it to it.lastModified() }
+                            ?.sortedBy { it.second }
+                            ?.iterator() ?: return@withIOContext
                     while (files.hasNext()) {
-                        val file = files.next()
+                        val (file, _) = files.next()
                         deletedSize += file.length()
                         file.delete()
                         if (size - deletedSize <= maxOnlineCacheSize) {
@@ -180,7 +198,10 @@ class CoverCache(val context: Context) {
     fun setCustomCoverToCache(manga: Manga, inputStream: InputStream) {
         getCustomCoverFile(manga).outputStream().use {
             inputStream.copyTo(it)
-            context.imageLoader.memoryCache?.remove(MemoryCache.Key(manga.key()))
+            context.imageLoader.memoryCache
+                ?.keys
+                ?.filter { it.key.startsWith("${manga.id}-") || it.key.startsWith(manga.key()) }
+                ?.forEach { context.imageLoader.memoryCache?.remove(it) }
         }
     }
 
@@ -197,7 +218,12 @@ class CoverCache(val context: Context) {
             coverFile.inputStream().use { inputStream ->
                 getCustomCoverFile(manga).outputStream().use {
                     inputStream.copyTo(it)
-                    context.imageLoader.memoryCache?.remove(MemoryCache.Key(manga.key()))
+                    context.imageLoader.memoryCache
+                        ?.keys
+                        ?.filter {
+                            it.key.startsWith("${manga.id}-") || it.key.startsWith(manga.key())
+                        }
+                        ?.forEach { context.imageLoader.memoryCache?.remove(it) }
                 }
             }
         }
@@ -211,7 +237,10 @@ class CoverCache(val context: Context) {
      */
     fun deleteCustomCover(manga: Manga): Boolean {
         val result = getCustomCoverFile(manga).let { it.exists() && it.delete() }
-        context.imageLoader.memoryCache?.remove(MemoryCache.Key(manga.key()))
+        context.imageLoader.memoryCache
+            ?.keys
+            ?.filter { it.key.startsWith("${manga.id}-") || it.key.startsWith(manga.key()) }
+            ?.forEach { context.imageLoader.memoryCache?.remove(it) }
         return result
     }
 
@@ -243,10 +272,7 @@ class CoverCache(val context: Context) {
      * @param manga the manga.
      * @return status of deletion.
      */
-    fun deleteFromCache(
-        manga: Manga,
-        deleteCustom: Boolean = true,
-    ) {
+    fun deleteFromCache(manga: Manga, deleteCustom: Boolean = true) {
         // Check if url is empty.
         if (manga.thumbnail_url.isNullOrEmpty()) return
 
@@ -254,7 +280,10 @@ class CoverCache(val context: Context) {
         val file = getCoverFile(manga.thumbnail_url, manga.favorite)
         if (deleteCustom) deleteCustomCover(manga)
         if (file.exists()) {
-            context.imageLoader.memoryCache?.remove(MemoryCache.Key(manga.key()))
+            context.imageLoader.memoryCache
+                ?.keys
+                ?.filter { it.key.startsWith("${manga.id}-") || it.key.startsWith(manga.key()) }
+                ?.forEach { context.imageLoader.memoryCache?.remove(it) }
             file.delete()
         }
     }

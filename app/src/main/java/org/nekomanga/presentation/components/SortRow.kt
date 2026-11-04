@@ -13,12 +13,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.tooling.preview.PreviewParameter
 import eu.kanade.tachiyomi.ui.manga.MangaConstants
 import jp.wasabeef.gap.Gap
-import org.nekomanga.presentation.screens.ThemeColorState
-import org.nekomanga.presentation.screens.defaultThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.components.theme.defaultThemeColorState
+import org.nekomanga.presentation.theme.Size
+import org.nekomanga.presentation.theme.ThemeConfig
+import org.nekomanga.presentation.theme.ThemeConfigProvider
+import org.nekomanga.presentation.theme.ThemedPreviews
 
 @Composable
 fun SortRow(
@@ -35,7 +41,7 @@ fun SortRow(
             true ->
                 MaterialTheme.colorScheme.onSurface.copy(NekoColors.disabledAlphaLowContrast) to
                     MaterialTheme.colorScheme.onSurface.copy(NekoColors.disabledAlphaLowContrast)
-            false -> themeColorState.buttonColor to MaterialTheme.colorScheme.onSurface
+            false -> themeColorState.primaryColor to MaterialTheme.colorScheme.onSurface
         }
 
     Row(
@@ -46,38 +52,38 @@ fun SortRow(
                         changeSortState(sortState, sortChanged)
                     }
                 }
-                .padding(horizontal = 12.dp, vertical = 16.dp),
+                .padding(horizontal = Size.smedium, vertical = Size.medium),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when (sortState) {
             MangaConstants.SortState.Ascending -> {
                 Icon(
                     imageVector = Icons.Filled.ArrowUpward,
-                    contentDescription = null,
+                    contentDescription = stringResource(id = org.nekomanga.R.string.ascending),
                     tint = tintColor,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(Size.large),
                 )
             }
             MangaConstants.SortState.Descending -> {
                 Icon(
                     imageVector = Icons.Filled.ArrowDownward,
-                    contentDescription = null,
+                    contentDescription = stringResource(id = org.nekomanga.R.string.descending),
                     tint = tintColor,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(Size.large),
                 )
             }
             MangaConstants.SortState.None -> {
-                Gap(24.dp)
+                Gap(Size.large)
             }
         }
-        Gap(16.dp)
+        Gap(Size.medium)
         Text(text = rowText, style = rowTextStyle, color = textColor)
     }
 }
 
 private fun changeSortState(
     sortState: MangaConstants.SortState,
-    sortChanged: (MangaConstants.SortState) -> Unit
+    sortChanged: (MangaConstants.SortState) -> Unit,
 ) {
     val newState =
         when (sortState) {
@@ -86,4 +92,16 @@ private fun changeSortState(
             MangaConstants.SortState.None -> MangaConstants.SortState.Descending
         }
     sortChanged(newState)
+}
+
+@Preview
+@Composable
+private fun SortRowPreview(@PreviewParameter(ThemeConfigProvider::class) themeConfig: ThemeConfig) {
+    ThemedPreviews(themeConfig) { theme ->
+        SortRow(
+            sortState = MangaConstants.SortState.Ascending,
+            sortChanged = {},
+            rowText = theme.name,
+        )
+    }
 }

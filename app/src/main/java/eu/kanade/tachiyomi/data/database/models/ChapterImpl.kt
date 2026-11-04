@@ -18,6 +18,8 @@ class ChapterImpl : Chapter {
 
     override var scanlator: String? = null
 
+    override var uploader: String? = null
+
     override var read: Boolean = false
 
     override var bookmark: Boolean = false
@@ -34,7 +36,11 @@ class ChapterImpl : Chapter {
 
     override var source_order: Int = 0
 
+    override var smart_order: Int = 0
+
     override var language: String? = null
+
+    override var isUnavailable: Boolean = false
 
     override var mangadex_chapter_id: String = ""
 

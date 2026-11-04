@@ -24,6 +24,10 @@ data class BackupChapter(
 
     // J2K specific values
     @ProtoNumber(800) var pagesLeft: Int = 0,
+    // Neko Values
+    @ProtoNumber(905) var uploader: String? = null,
+    @ProtoNumber(906) var isUnavailable: Boolean = false,
+    @ProtoNumber(907) var smartOrder: Int = 0,
 ) {
     fun toChapterImpl(): ChapterImpl {
         return ChapterImpl().apply {
@@ -31,13 +35,16 @@ data class BackupChapter(
             name = this@BackupChapter.name
             chapter_number = this@BackupChapter.chapterNumber
             scanlator = this@BackupChapter.scanlator
+            uploader = this@BackupChapter.uploader
             read = this@BackupChapter.read
             bookmark = this@BackupChapter.bookmark
             last_page_read = this@BackupChapter.lastPageRead
             date_fetch = this@BackupChapter.dateFetch
             date_upload = this@BackupChapter.dateUpload
             source_order = this@BackupChapter.sourceOrder
+            smart_order = this@BackupChapter.smartOrder
             pages_left = this@BackupChapter.pagesLeft
+            isUnavailable = this@BackupChapter.isUnavailable
         }
     }
 
@@ -48,12 +55,14 @@ data class BackupChapter(
                 name = chapter.name,
                 chapterNumber = chapter.chapter_number,
                 scanlator = chapter.scanlator,
+                uploader = chapter.uploader,
                 read = chapter.read,
                 bookmark = chapter.bookmark,
                 lastPageRead = chapter.last_page_read,
                 dateFetch = chapter.date_fetch,
                 dateUpload = chapter.date_upload,
                 sourceOrder = chapter.source_order,
+                smartOrder = chapter.smart_order,
                 pagesLeft = chapter.pages_left,
             )
         }

@@ -1,40 +1,72 @@
 package eu.kanade.tachiyomi.ui.source.latest
 
-import android.os.Parcelable
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.parcelize.Parcelize
+import androidx.compose.runtime.Immutable
 import org.nekomanga.R
+import org.nekomanga.domain.DisplayResult
 import org.nekomanga.domain.category.CategoryItem
 import org.nekomanga.domain.manga.DisplayManga
+import org.nekomanga.presentation.components.UiText
 
+@Immutable
 data class DisplayScreenState(
     val isLoading: Boolean = false,
-    val title: String = "",
-    val titleRes: Int? = null,
-    val allDisplayManga: ImmutableList<DisplayManga> = persistentListOf(),
-    val filteredDisplayManga: ImmutableList<DisplayManga> = persistentListOf(),
+    val incognitoMode: Boolean = false,
+    val title: UiText = UiText.String(""),
+    val alternativeDisplay: List<DisplayResult> = listOf(),
+    val allDisplayManga: List<DisplayManga> = listOf(),
+    val filteredDisplayManga: List<DisplayManga> = listOf(),
     val error: String? = null,
     val endReached: Boolean = false,
     val page: Int = 1,
     val isList: Boolean,
+    val isDisplayResult: Boolean = false,
     val outlineCovers: Boolean,
+    val dynamicCovers: Boolean,
     val isComfortableGrid: Boolean,
     val rawColumnCount: Float,
     val promptForCategories: Boolean = false,
-    val showLibraryEntries: Boolean,
-    val categories: ImmutableList<CategoryItem> = persistentListOf(),
+    val libraryEntryVisibility: Int,
+    val categories: List<CategoryItem> = listOf(),
 )
 
-@Parcelize
-sealed interface DisplayScreenType : Parcelable {
-    @Parcelize data class LatestChapters(val titleRes: Int = R.string.latest) : DisplayScreenType
+@Immutable
+data class DisplayPageResult(
+    val hasNextPage: Boolean = false,
+    val displayResult: List<DisplayResult> = listOf(),
+    val displayManga: List<DisplayManga> = listOf(),
+)
 
-    @Parcelize
-    data class RecentlyAdded(val titleRes: Int = R.string.recently_added) : DisplayScreenType
+sealed interface DisplayScreenType {
+    // All types now have a common `title` property
+    val title: UiText
 
-    @Parcelize
-    data class PopularNewTitles(val titleRes: Int = R.string.popularNewTitles) : DisplayScreenType
+    object LatestChapters : DisplayScreenType {
+        override val title = UiText.StringResource(R.string.latest)
+    }
 
-    @Parcelize data class List(val title: String, val listUUID: String) : DisplayScreenType
+    object FeedUpdates : DisplayScreenType {
+        override val title = UiText.StringResource(R.string.feed_updates)
+    }
+
+    object RecentlyAdded : DisplayScreenType {
+        override val title = UiText.StringResource(R.string.recently_added)
+    }
+
+    object PopularNewTitles : DisplayScreenType {
+        override val title = UiText.StringResource(R.string.popular_new_titles)
+    }
+
+    data class List(override val title: UiText.String, val listUUID: String) : DisplayScreenType
+
+    data class AuthorByName(override val title: UiText.String) : DisplayScreenType
+
+    data class Tag(override val title: UiText.String) : DisplayScreenType
+
+    data class AuthorWithUuid(override val title: UiText.String, val authorUUID: String) :
+        DisplayScreenType
+
+    data class GroupByName(override val title: UiText.String) : DisplayScreenType
+
+    data class GroupByUuid(override val title: UiText.String, val groupUUID: String) :
+        DisplayScreenType
 }

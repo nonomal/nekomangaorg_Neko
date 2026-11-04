@@ -29,7 +29,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.lanars.compose.datetextfield.DateTextField
 import com.lanars.compose.datetextfield.Format
-import eu.kanade.presentation.components.Divider
 import eu.kanade.tachiyomi.ui.manga.TrackingConstants
 import eu.kanade.tachiyomi.ui.manga.TrackingConstants.ReadingDate
 import eu.kanade.tachiyomi.ui.manga.TrackingConstants.TrackDateChange
@@ -46,8 +45,9 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import jp.wasabeef.gap.Gap
 import org.nekomanga.R
+import org.nekomanga.presentation.components.Divider
 import org.nekomanga.presentation.components.NekoColors
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
 import org.nekomanga.presentation.theme.Size
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -76,14 +76,12 @@ fun TrackingDateSheet(
     val currentDateExists = trackingDate.currentDate > 0L
 
     BaseSheet(themeColor = themeColorState) {
-        Box(
-            modifier = Modifier.padding(horizontal = 8.dp).fillMaxWidth(),
-        ) {
+        Box(modifier = Modifier.padding(horizontal = 8.dp).fillMaxWidth()) {
             IconButton(onClick = { onDismiss() }) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = null,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(Size.largePlus),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -94,7 +92,7 @@ fun TrackingDateSheet(
                             when (trackingDate.readingDate) {
                                 ReadingDate.Start -> R.string.started_reading_date
                                 ReadingDate.Finish -> R.string.finished_reading_date
-                            },
+                            }
                     ),
                 style =
                     MaterialTheme.typography.titleLarge.copy(
@@ -114,7 +112,7 @@ fun TrackingDateSheet(
                 text =
                     stringResource(
                         id = R.string.current_date_,
-                        trackingDate.dateFormat.format(trackingDate.currentDate)
+                        trackingDate.dateFormat.format(trackingDate.currentDate),
                     ),
                 style =
                     MaterialTheme.typography.titleSmall.copy(
@@ -136,7 +134,7 @@ fun TrackingDateSheet(
                     text = stringResource(id = R.string.remove),
                     style =
                         MaterialTheme.typography.titleMedium.copy(
-                            color = themeColorState.buttonColor
+                            color = themeColorState.primaryColor
                         ),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -155,13 +153,13 @@ fun TrackingDateSheet(
             val suggestedDate =
                 LocalDateTime.ofInstant(
                         Instant.ofEpochMilli(suggestedDateEpoch),
-                        ZoneId.systemDefault()
+                        ZoneId.systemDefault(),
                     )
                     .toLocalDate()
             val currentDate =
                 LocalDateTime.ofInstant(
                         Instant.ofEpochMilli(trackingDate.currentDate),
-                        ZoneId.systemDefault()
+                        ZoneId.systemDefault(),
                     )
                     .toLocalDate()
 
@@ -173,7 +171,7 @@ fun TrackingDateSheet(
                             EditTrackingDate(
                                 trackingDate.readingDate,
                                 suggestedDate,
-                                trackAndService
+                                trackAndService,
                             )
                         )
                     }
@@ -182,11 +180,11 @@ fun TrackingDateSheet(
                         text =
                             stringResource(
                                 id = R.string.use_suggested_date_of_,
-                                suggestedDate.format(dateTimeFormatter)
+                                suggestedDate.format(dateTimeFormatter),
                             ),
                         style =
                             MaterialTheme.typography.titleMedium.copy(
-                                color = themeColorState.buttonColor
+                                color = themeColorState.primaryColor
                             ),
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -201,7 +199,7 @@ fun TrackingDateSheet(
                     text = stringResource(id = R.string.edit),
                     style =
                         MaterialTheme.typography.titleMedium.copy(
-                            color = themeColorState.buttonColor
+                            color = themeColorState.primaryColor
                         ),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -230,7 +228,7 @@ fun TrackingDateSheet(
                         MaterialTheme.typography.headlineSmall.copy(
                             color = MaterialTheme.colorScheme.onSurface
                         ),
-                    cursorBrush = SolidColor(themeColorState.buttonColor),
+                    cursorBrush = SolidColor(themeColorState.primaryColor),
                     hintTextStyle =
                         MaterialTheme.typography.headlineSmall.copy(
                             color =
@@ -248,8 +246,8 @@ fun TrackingDateSheet(
                     },
                     colors =
                         ButtonDefaults.elevatedButtonColors(
-                            containerColor = themeColorState.buttonColor,
-                            contentColor = MaterialTheme.colorScheme.surface
+                            containerColor = themeColorState.primaryColor,
+                            contentColor = MaterialTheme.colorScheme.surface,
                         ),
                     enabled = newDate != null,
                 ) {

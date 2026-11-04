@@ -10,53 +10,65 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
-import androidx.multidex.MultiDex
-import com.mikepenz.iconics.Iconics
-import com.mikepenz.iconics.typeface.library.community.material.CommunityMaterial
-import com.mikepenz.iconics.typeface.library.materialdesigndx.MaterialDesignDx
+import coil3.SingletonImageLoader
 import eu.kanade.tachiyomi.AppModule
 import eu.kanade.tachiyomi.PreferenceModule
 import eu.kanade.tachiyomi.crash.CrashActivity
 import eu.kanade.tachiyomi.crash.GlobalExceptionHandler
-import eu.kanade.tachiyomi.data.image.coil.CoilSetup
+import eu.kanade.tachiyomi.crash.VisibleActivityTracker
+import eu.kanade.tachiyomi.crash.currentProcessName
+import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.data.cache.StartupCacheCleaner
+import eu.kanade.tachiyomi.data.coil.coilImageLoader
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.ui.library.LibraryPresenter
-import eu.kanade.tachiyomi.ui.recents.RecentsPresenter
+import eu.kanade.tachiyomi.ui.main.DeepLinks
+import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.security.SecureActivityDelegate
 import eu.kanade.tachiyomi.util.manga.MangaCoverMetadata
 import eu.kanade.tachiyomi.util.system.AuthenticatorUtil
+import eu.kanade.tachiyomi.util.system.launchIO
 import eu.kanade.tachiyomi.util.system.notification
 import java.security.Security
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import org.conscrypt.Conscrypt
 import org.nekomanga.core.network.NetworkPreferences
 import org.nekomanga.core.security.SecurityPreferences
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.CrashReportingTree
 import org.nekomanga.logging.DebugReportingTree
 import org.nekomanga.logging.TimberKt
+import org.nekomanga.presentation.screens.feed.FeedViewModel
+import org.nekomanga.presentation.screens.library.LibraryViewModel
+import tachiyomi.core.util.system.WebViewUtil
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.injectLazy
 
 private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNITO_MODE"
 
-open class App : Application(), DefaultLifecycleObserver {
+open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factory {
 
     val preferences: PreferencesHelper by injectLazy()
     val networkPreferences: NetworkPreferences by injectLazy()
     val securityPreferences: SecurityPreferences by injectLazy()
+    val mangaDexPreferences: MangaDexPreferences by injectLazy()
+    private val coverCache: CoverCache by injectLazy()
 
     private val disableIncognitoReceiver = DisableIncognitoReceiver()
 
@@ -64,7 +76,14 @@ open class App : Application(), DefaultLifecycleObserver {
     override fun onCreate() {
         super<Application>.onCreate()
 
-        GlobalExceptionHandler.initialize(applicationContext, CrashActivity::class.java)
+        val activityTracker = VisibleActivityTracker()
+        registerActivityLifecycleCallbacks(activityTracker)
+        GlobalExceptionHandler.initialize(
+            applicationContext,
+            CrashActivity::class.java,
+            currentProcessName(),
+            activityTracker,
+        )
 
         kotlin
             .runCatching { CookieManager.getInstance() }
@@ -72,7 +91,7 @@ open class App : Application(), DefaultLifecycleObserver {
                 Toast.makeText(
                         applicationContext,
                         "Error! App requires WebView to be installed",
-                        Toast.LENGTH_LONG
+                        Toast.LENGTH_LONG,
                     )
                     .show()
             }
@@ -85,8 +104,9 @@ open class App : Application(), DefaultLifecycleObserver {
         // Avoid potential crashes
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             val process = getProcessName()
-            if (packageName != process)
+            if (packageName != process) {
                 kotlin.runCatching { WebView.setDataDirectorySuffix(process) }
+            }
         }
 
         Injekt.importModule(PreferenceModule(this))
@@ -100,15 +120,18 @@ open class App : Application(), DefaultLifecycleObserver {
             TimberKt.plant(DebugReportingTree())
         }
 
-        CoilSetup(this)
-        setupNotificationChannels()
-
-        Iconics.init(applicationContext)
-        Iconics.registerFont(CommunityMaterial)
-        Iconics.registerFont(MaterialDesignDx)
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
 
-        MangaCoverMetadata.load()
+        ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.Default) {
+            setupNotificationChannels()
+            MangaCoverMetadata.load()
+        }
+
+        val startedAt = System.currentTimeMillis()
+        ProcessLifecycleOwner.get().lifecycleScope.launchIO {
+            StartupCacheCleaner(cacheDir, coverCache).clean(startedAt)
+        }
+
         preferences
             .nightMode()
             .changes()
@@ -155,6 +178,48 @@ open class App : Application(), DefaultLifecycleObserver {
                 }
             }
             .launchIn(ProcessLifecycleOwner.get().lifecycleScope)
+
+        // Show notification when the user has been unexpectedly signed out of MangaDex
+        // (auth refresh rejected). Checked once at startup and cleared so the notification
+        // is only shown once.
+        if (mangaDexPreferences.unexpectedLogout().get()) {
+            mangaDexPreferences.unexpectedLogout().set(false)
+            val notificationManager = NotificationManagerCompat.from(this)
+            if (
+                ActivityCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                val tapIntent =
+                    Intent(this, MainActivity::class.java).apply {
+                        action = DeepLinks.Actions.MangaDexSettings
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    }
+                val pendingIntent =
+                    PendingIntent.getActivity(
+                        this,
+                        Notifications.Id.Authentication.SessionExpired,
+                        tapIntent,
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                    )
+                val body = getString(R.string.mangadex_session_expired_body)
+                val notification =
+                    notification(Notifications.Channel.Authentication) {
+                        setContentTitle(getString(R.string.mangadex_session_expired_title))
+                        setContentText(body)
+                        setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                        setSmallIcon(R.drawable.ic_neko_notification)
+                        setContentIntent(pendingIntent)
+                        setAutoCancel(true)
+                        priority = NotificationCompat.PRIORITY_HIGH
+                    }
+                notificationManager.notify(
+                    Notifications.Id.Authentication.SessionExpired,
+                    notification,
+                )
+            }
+        }
     }
 
     override fun onPause(owner: LifecycleOwner) {
@@ -165,14 +230,33 @@ open class App : Application(), DefaultLifecycleObserver {
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
-        MultiDex.install(this)
     }
 
     override fun onLowMemory() {
         super.onLowMemory()
-        LibraryPresenter.onLowMemory()
-        RecentsPresenter.onLowMemory()
+        LibraryViewModel.onLowMemory()
+        FeedViewModel.onLowMemory()
     }
+
+    override fun getPackageName(): String {
+        try {
+            // Override the value passed as X-Requested-With in WebView requests
+            val stackTrace = Looper.getMainLooper().thread.stackTrace
+            val isChromiumCall = stackTrace.any { trace ->
+                trace.className.lowercase() in
+                    setOf("org.chromium.base.buildinfo", "org.chromium.base.apkinfo") &&
+                    trace.methodName.lowercase() in setOf("getall", "getpackagename", "<init>")
+            }
+
+            if (isChromiumCall) return WebViewUtil.spoofedPackageName(applicationContext)
+        } catch (e: Exception) {
+            TimberKt.e(e) { "Failed to spoof package name" }
+        }
+
+        return super.getPackageName()
+    }
+
+    override fun newImageLoader(context: Context) = coilImageLoader(context)
 
     protected open fun setupNotificationChannels() {
         Notifications.createChannels(this)

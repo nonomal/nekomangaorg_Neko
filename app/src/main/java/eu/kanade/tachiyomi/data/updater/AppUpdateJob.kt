@@ -20,7 +20,7 @@ class AppUpdateJob(private val context: Context, workerParams: WorkerParameters)
 
     override suspend fun doWork(): Result = coroutineScope {
         try {
-            AppUpdateChecker().checkForUpdate(context)
+            AppUpdateChecker().checkForUpdate()
             Result.success()
         } catch (e: Exception) {
             TimberKt.e(e) { "error checking for app update" }
@@ -38,15 +38,13 @@ class AppUpdateJob(private val context: Context, workerParams: WorkerParameters)
 
         fun setupTask(context: Context) {
             val constraints =
-                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiresBatteryNotLow(true)
+                    .build()
 
             val request =
-                PeriodicWorkRequestBuilder<AppUpdateJob>(
-                        2,
-                        TimeUnit.DAYS,
-                        3,
-                        TimeUnit.HOURS,
-                    )
+                PeriodicWorkRequestBuilder<AppUpdateJob>(2, TimeUnit.DAYS, 3, TimeUnit.HOURS)
                     .addTag(TAG)
                     .setConstraints(constraints)
                     .build()

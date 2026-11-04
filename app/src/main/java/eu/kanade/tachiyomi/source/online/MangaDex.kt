@@ -5,10 +5,13 @@ import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.Result
 import com.github.michaelbull.result.andThen
 import com.github.michaelbull.result.coroutines.coroutineBinding
-import eu.kanade.tachiyomi.data.database.models.Scanlator
+import com.github.michaelbull.result.map
+import com.skydoves.sandwich.getOrNull
+import com.skydoves.sandwich.mapSuccess
+import eu.kanade.tachiyomi.data.database.models.ScanlatorGroup
 import eu.kanade.tachiyomi.data.database.models.SourceArtwork
 import eu.kanade.tachiyomi.data.database.models.Track
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.database.models.Uploader
 import eu.kanade.tachiyomi.source.MangaDetailChapterInformation
 import eu.kanade.tachiyomi.source.model.MangaListPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -16,6 +19,7 @@ import eu.kanade.tachiyomi.source.model.ResultListPage
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.uuid
+import eu.kanade.tachiyomi.source.online.handlers.FeedUpdatesHandler
 import eu.kanade.tachiyomi.source.online.handlers.FollowsHandler
 import eu.kanade.tachiyomi.source.online.handlers.ImageHandler
 import eu.kanade.tachiyomi.source.online.handlers.LatestChapterHandler
@@ -24,6 +28,7 @@ import eu.kanade.tachiyomi.source.online.handlers.ListResults
 import eu.kanade.tachiyomi.source.online.handlers.MangaHandler
 import eu.kanade.tachiyomi.source.online.handlers.PageHandler
 import eu.kanade.tachiyomi.source.online.handlers.SearchHandler
+import eu.kanade.tachiyomi.source.online.models.dto.AggregateDto
 import eu.kanade.tachiyomi.source.online.utils.FollowStatus
 import eu.kanade.tachiyomi.source.online.utils.toSourceManga
 import eu.kanade.tachiyomi.ui.source.latest.DisplayScreenType
@@ -31,9 +36,7 @@ import eu.kanade.tachiyomi.util.getOrResultError
 import eu.kanade.tachiyomi.util.lang.toResultError
 import eu.kanade.tachiyomi.util.system.logTimeTaken
 import eu.kanade.tachiyomi.util.system.withIOContext
-import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import okhttp3.Response
@@ -42,11 +45,12 @@ import org.nekomanga.domain.chapter.SimpleChapter
 import org.nekomanga.domain.filter.DexFilters
 import org.nekomanga.domain.manga.SourceManga
 import org.nekomanga.domain.network.ResultError
+import org.nekomanga.domain.site.MangaDexPreferences
 import uy.kohesive.injekt.injectLazy
 
 open class MangaDex : HttpSource() {
 
-    private val preferences: PreferencesHelper by injectLazy()
+    private val mangaDexPreferences: MangaDexPreferences by injectLazy()
 
     private val followsHandler: FollowsHandler by injectLazy()
 
@@ -64,6 +68,8 @@ open class MangaDex : HttpSource() {
 
     private val latestChapterHandler: LatestChapterHandler by injectLazy()
 
+    private val feedUpdatesHandler: FeedUpdatesHandler by injectLazy()
+
     suspend fun updateFollowStatus(mangaID: String, followStatus: FollowStatus): Boolean {
         return followsHandler.updateFollowStatus(mangaID, followStatus)
     }
@@ -72,15 +78,15 @@ open class MangaDex : HttpSource() {
         return withIOContext {
             val response =
                 networkServices.service.randomManga(
-                    preferences.contentRatingSelections().get().toList()
+                    mangaDexPreferences.visibleContentRatings().get().toList()
                 )
 
             val result =
                 response.getOrResultError("trying to get random Manga").andThen {
                     Ok(
                         it.data.toSourceManga(
-                            preferences.thumbnailQuality().get(),
-                            useNoCoverUrl = false
+                            mangaDexPreferences.coverQuality().get(),
+                            useNoCoverUrl = false,
                         )
                     )
                 }
@@ -95,10 +101,36 @@ open class MangaDex : HttpSource() {
         }
     }
 
-    suspend fun getScanlator(scanlator: String): Result<Scanlator, ResultError> {
+    suspend fun getAuthorNameByUuid(authorUuid: String): Result<String, ResultError> {
         return withIOContext {
             networkServices.service
-                .scanlatorGroup(scanlator)
+                .authorByUuid(authorUuid)
+                .getOrResultError("Trying to get author")
+                .andThen { authorDto -> Ok(authorDto.data.attributes.name) }
+        }
+    }
+
+    suspend fun getScanlatorGroupNameByUuid(groupUuid: String): Result<String, ResultError> {
+        return withIOContext {
+            networkServices.service
+                .scanlatorGroupByUuid(groupUuid)
+                .getOrResultError("Trying to get scanlator")
+                .andThen { groupListDto ->
+                    val groupDto = groupListDto.data.firstOrNull()
+                    when (groupDto == null) {
+                        true -> Err("No Scanlator Group found".toResultError())
+                        false -> {
+                            Ok(groupDto.attributes.name)
+                        }
+                    }
+                }
+        }
+    }
+
+    suspend fun getScanlatorGroup(group: String): Result<ScanlatorGroup, ResultError> {
+        return withIOContext {
+            networkServices.service
+                .scanlatorGroup(group)
                 .getOrResultError("Trying to get scanlator")
                 .andThen { groupListDto ->
                     val groupDto = groupListDto.data.firstOrNull()
@@ -106,12 +138,29 @@ open class MangaDex : HttpSource() {
                         true -> Err("No Scanlator Group found".toResultError())
                         false -> {
                             Ok(
-                                Scanlator(
+                                ScanlatorGroup(
                                     name = groupDto.attributes.name,
                                     uuid = groupDto.id,
                                     description = groupDto.attributes.description,
-                                ),
+                                )
                             )
+                        }
+                    }
+                }
+        }
+    }
+
+    suspend fun getUploader(uploader: String): Result<Uploader, ResultError> {
+        return withIOContext {
+            networkServices.authService
+                .uploader(uploader)
+                .getOrResultError("Trying to get uploader")
+                .andThen { userListDto ->
+                    val userDto = userListDto.data.firstOrNull()
+                    when (userDto == null) {
+                        true -> Err("User not found".toResultError())
+                        false -> {
+                            Ok(Uploader(username = userDto.attributes.username, uuid = userDto.id))
                         }
                     }
                 }
@@ -135,106 +184,113 @@ open class MangaDex : HttpSource() {
     }
 
     suspend fun fetchList(listId: String): Result<ListResults, ResultError> {
-        return listHandler.retrieveList(listId)
+        return listHandler.retrieveMangaFromList(listId, 1)
+    }
+
+    suspend fun fetchAllList(listId: String): Result<ListResults, ResultError> {
+        return listHandler.retrieveAllMangaFromList(listId, false)
     }
 
     suspend fun fetchHomePageInfo(
-        blockedScanlatorUUIDs: List<String>
+        blockedGroupUUIDs: List<String>,
+        blockedUploaderUUIDs: List<String>,
     ): Result<List<ListResults>, ResultError> {
         return withIOContext {
             coroutineBinding {
                 val seasonal = async {
-                    fetchList(MdConstants.currentSeasonalId)
-                        .andThen { listResults ->
-                            Ok(
-                                listResults.copy(
-                                    sourceManga =
-                                        listResults.sourceManga.shuffled().toImmutableList()
-                                )
-                            )
-                        }
-                        .bind()
+                    val id =
+                        networkServices.service.getSeasonalList().mapSuccess { id }.getOrNull()
+                            ?: return@async Ok(null)
+                    fetchList(id).map { listResults ->
+                        listResults.copy(sourceManga = listResults.sourceManga.shuffled().toList())
+                    }
                 }
 
                 val staffPick = async {
-                    fetchList(MdConstants.staffPicksId)
-                        .andThen { listResults ->
-                            Ok(
-                                listResults.copy(
-                                    sourceManga =
-                                        listResults.sourceManga.shuffled().toImmutableList()
-                                )
+                    fetchList(MdConstants.staffPicksId).andThen { listResults ->
+                        Ok(
+                            listResults.copy(
+                                sourceManga = listResults.sourceManga.shuffled().toList()
                             )
-                        }
-                        .bind()
+                        )
+                    }
                 }
 
                 val nekoDevPicks = async {
-                    fetchList(MdConstants.nekoDevPicksId)
-                        .andThen { listResults ->
-                            Ok(
-                                listResults.copy(
-                                    sourceManga =
-                                        listResults.sourceManga.shuffled().toImmutableList()
-                                )
+                    fetchList(MdConstants.nekoDevPicksId).andThen { listResults ->
+                        Ok(
+                            listResults.copy(
+                                sourceManga = listResults.sourceManga.shuffled().toList()
                             )
-                        }
-                        .bind()
+                        )
+                    }
                 }
 
                 val popularNewTitles = async {
-                    searchHandler
-                        .popularNewTitles(1)
+                    searchHandler.popularNewTitles(1).andThen { mangaListPage ->
+                        Ok(
+                            ListResults(
+                                displayScreenType = DisplayScreenType.PopularNewTitles,
+                                sourceManga = mangaListPage.sourceManga.shuffled().toList(),
+                            )
+                        )
+                    }
+                }
+
+                val latestFeed = async {
+                    if (!loginHelper.isLoggedIn()) return@async Ok(null)
+                    feedUpdatesHandler
+                        .getPage(
+                            blockedGroupUUIDs = blockedGroupUUIDs,
+                            blockedUploaderUUIDs = blockedUploaderUUIDs,
+                            limit = MdConstants.Limits.latestSmaller,
+                        )
                         .andThen { mangaListPage ->
                             Ok(
                                 ListResults(
-                                    displayScreenType = DisplayScreenType.PopularNewTitles(),
-                                    sourceManga =
-                                        mangaListPage.sourceManga.shuffled().toImmutableList()
+                                    displayScreenType = DisplayScreenType.FeedUpdates,
+                                    sourceManga = mangaListPage.sourceManga,
                                 )
                             )
                         }
-                        .bind()
                 }
 
                 val latestChapter = async {
                     latestChapterHandler
                         .getPage(
-                            blockedScanlatorUUIDs = blockedScanlatorUUIDs,
-                            limit = MdConstants.Limits.latestSmaller
+                            blockedGroupUUIDs = blockedGroupUUIDs,
+                            blockedUploaderUUIDs = blockedUploaderUUIDs,
+                            limit = MdConstants.Limits.latestSmaller,
                         )
                         .andThen { mangaListPage ->
                             Ok(
                                 ListResults(
-                                    displayScreenType = DisplayScreenType.LatestChapters(),
-                                    sourceManga = mangaListPage.sourceManga
+                                    displayScreenType = DisplayScreenType.LatestChapters,
+                                    sourceManga = mangaListPage.sourceManga,
                                 )
                             )
                         }
-                        .bind()
                 }
 
                 val recentlyAdded = async {
-                    searchHandler
-                        .recentlyAdded(1)
-                        .andThen { mangaListPage ->
-                            Ok(
-                                ListResults(
-                                    displayScreenType = DisplayScreenType.RecentlyAdded(),
-                                    sourceManga = mangaListPage.sourceManga
-                                )
+                    searchHandler.recentlyAdded(1).andThen { mangaListPage ->
+                        Ok(
+                            ListResults(
+                                displayScreenType = DisplayScreenType.RecentlyAdded,
+                                sourceManga = mangaListPage.sourceManga,
                             )
-                        }
-                        .bind()
+                        )
+                    }
                 }
 
-                listOf(
+                listOfNotNull(
+                    latestFeed.await(),
                     popularNewTitles.await(),
                     latestChapter.await(),
                     seasonal.await(),
                     staffPick.await(),
                     nekoDevPicks.await(),
-                    recentlyAdded.await()
+                    recentlyAdded.await(),
                 )
             }
         }
@@ -250,14 +306,23 @@ open class MangaDex : HttpSource() {
 
     suspend fun latestChapters(
         page: Int,
-        blockedScanlatorUUIDs: List<String>
+        blockedGroupUUIDs: List<String>,
+        blockedUploaderUUIDs: List<String>,
     ): Result<MangaListPage, ResultError> {
-        return latestChapterHandler.getPage(page, blockedScanlatorUUIDs)
+        return latestChapterHandler.getPage(page, blockedGroupUUIDs, blockedUploaderUUIDs)
+    }
+
+    suspend fun feedUpdates(
+        page: Int,
+        blockedGroupUUIDs: List<String>,
+        blockedUploaderUUIDs: List<String>,
+    ): Result<MangaListPage, ResultError> {
+        return feedUpdatesHandler.getPage(page, blockedGroupUUIDs, blockedUploaderUUIDs)
     }
 
     suspend fun getMangaDetails(
         mangaUUID: String,
-        fetchArtwork: Boolean = true
+        fetchArtwork: Boolean = true,
     ): Result<Pair<SManga, List<SourceArtwork>>, ResultError> {
         return logTimeTaken("Total time to get manga details $mangaUUID") {
             mangaHandler.fetchMangaDetails(mangaUUID, fetchArtwork)
@@ -266,7 +331,7 @@ open class MangaDex : HttpSource() {
 
     suspend fun fetchMangaAndChapterDetails(
         manga: SManga,
-        fetchArtwork: Boolean
+        fetchArtwork: Boolean,
     ): Result<MangaDetailChapterInformation, ResultError> {
         return mangaHandler.fetchMangaAndChapterDetails(manga, fetchArtwork)
     }
@@ -275,8 +340,17 @@ open class MangaDex : HttpSource() {
         return mangaHandler.getMangaIdFromChapterId(urlChapterId)
     }
 
+    suspend fun getAggregate(mangaUuid: String): Result<AggregateDto, ResultError> {
+        return mangaHandler.getAggregate(mangaUuid)
+    }
+
     suspend fun fetchChapterList(manga: SManga): Result<List<SChapter>, ResultError> {
-        return mangaHandler.fetchChapterList(manga.uuid(), manga.last_chapter_number)
+        return mangaHandler.fetchChapterList(
+            manga.uuid(),
+            manga.last_chapter_number,
+            manga.last_volume_number,
+            mangaDexPreferences.includeUnavailableChapters().get(),
+        )
     }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> {

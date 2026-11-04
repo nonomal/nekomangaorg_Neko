@@ -1,106 +1,134 @@
-import com.android.build.gradle.BaseExtension
+import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.dsl.LibraryExtension
 import com.android.build.gradle.BasePlugin
+import com.ncorti.ktfmt.gradle.tasks.KtfmtCheckTask
 import com.ncorti.ktfmt.gradle.tasks.KtfmtFormatTask
 import org.gradle.api.tasks.testing.logging.TestLogEvent
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    id(androidx.plugins.application.get().pluginId) apply false
-    id(androidx.plugins.library.get().pluginId) apply false
-    alias(libs.plugins.google.services) apply false
-    id(kotlinx.plugins.android.get().pluginId) apply false
-    id(kotlinx.plugins.jvm.get().pluginId) apply false
-    id(kotlinx.plugins.parcelize.get().pluginId) apply false
-    alias(libs.plugins.about.libraries) apply false
-    alias(kotlinx.plugins.serialization) apply false
-    alias(libs.plugins.firebase) apply false
-    alias(libs.plugins.ktfmt)
+  id(androidx.plugins.application.get().pluginId) apply false
+  id(androidx.plugins.library.get().pluginId) apply false
+  id(androidx.plugins.baselineprofile.get().pluginId) apply false
+  alias(libs.plugins.google.services) apply false
+  alias(kotlinx.plugins.compose.compiler) apply false
+  id(kotlinx.plugins.jvm.get().pluginId) apply false
+  id(kotlinx.plugins.parcelize.get().pluginId) apply false
+  alias(libs.plugins.about.libraries) apply false
+  alias(kotlinx.plugins.serialization) apply false
+  alias(libs.plugins.firebase) apply false
+  alias(libs.plugins.ktfmt)
+  alias(libs.plugins.detekt)
 }
 
 subprojects {
-    tasks {
-        withType<KotlinCompile> {
-            kotlinOptions {
-                jvmTarget = JavaVersion.VERSION_17.toString()
-                freeCompilerArgs +=
-                    listOf(
-                        "-Xcontext-receivers",
-                        "-opt-in=kotlin.Experimental",
-                        "-opt-in=kotlin.RequiresOptIn",
-                        "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
-                        "-opt-in=androidx.compose.material.ExperimentalMaterialApi",
-                        "-opt-in=androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi",
-                        "-opt-in=androidx.compose.animation.graphics.ExperimentalAnimationGraphicsApi",
-                        "-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi",
-                        "-opt-in=kotlin.time.ExperimentalTime",
-                        "-opt-in=kotlinx.coroutines.DelicateCoroutinesApi",
-                        "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
-                        "-opt-in=coil.annotation.ExperimentalCoilApi",
-                        "-opt-in=kotlin.ExperimentalStdlibApi",
-                        "-opt-in=kotlinx.coroutines.FlowPreview",
-                        "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
-                        "-opt-in=kotlinx.coroutines.InternalCoroutinesApi",
-                        "-opt-in=kotlinx.serialization.ExperimentalSerializationApi",
-                    )
+  configurations.all {
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-android-extensions-runtime")
+  }
+  tasks {
+    withType<KotlinCompile> {
+      compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs.addAll(
+            listOf(
+                "-opt-in=kotlin.RequiresOptIn",
+                "-opt-in=kotlin.time.ExperimentalTime",
+                "-opt-in=kotlinx.coroutines.DelicateCoroutinesApi",
+                "-opt-in=kotlin.ExperimentalStdlibApi",
+                "-opt-in=kotlinx.coroutines.FlowPreview",
+                "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+                "-opt-in=kotlinx.coroutines.InternalCoroutinesApi",
+            )
+        )
+      }
 
-                // https://developer.android.com/jetpack/androidx/releases/compose-compiler#1.5.9
-                kotlinOptions.freeCompilerArgs +=
-                    listOf(
-                        "-P",
-                        "plugin:androidx.compose.compiler.plugins.kotlin:nonSkippingGroupOptimization=true",
-                    )
-            }
-            this.dependsOn("ktfmtFormat")
-        }
-
-        withType<Test>() {
-            useJUnitPlatform()
-            testLogging { events(TestLogEvent.PASSED, TestLogEvent.SKIPPED, TestLogEvent.FAILED) }
-        }
+      this.dependsOn("ktfmtFormat")
     }
-    plugins.withType<BasePlugin> {
-        plugins.apply(libs.plugins.ktfmt.get().pluginId)
-        ktfmt {
-            kotlinLangStyle()
-            removeUnusedImports = true
-        }
 
-        configure<BaseExtension> {
-            compileSdkVersion(AndroidConfig.compileSdkVersion)
-            defaultConfig {
-                minSdk = AndroidConfig.minSdkVersion
-                targetSdk = AndroidConfig.targetSdkVersion
-            }
-
-            compileOptions {
-                sourceCompatibility = JavaVersion.VERSION_17
-                targetCompatibility = JavaVersion.VERSION_17
-                isCoreLibraryDesugaringEnabled = true
-            }
-
-            dependencies { add("coreLibraryDesugaring", libs.desugaring) }
-
-            packagingOptions {
-                resources.excludes.add("META-INF/LICENSE-LGPL-2.1.txt")
-                resources.excludes.add("META-INF/LICENSE-LGPL-3.txt")
-                resources.excludes.add("META-INF/LICENSE-W3C-TEST")
-                resources.excludes.add("META-INF/DEPENDENCIES")
-            }
-        }
+    withType<Test> {
+      useJUnitPlatform()
+      testLogging { events(TestLogEvent.PASSED, TestLogEvent.SKIPPED, TestLogEvent.FAILED) }
     }
+  }
+
+  plugins.withType<io.gitlab.arturbosch.detekt.DetektPlugin> {
+    tasks.withType<io.gitlab.arturbosch.detekt.Detekt> {
+      reports {
+        html.required.set(true)
+        xml.required.set(true)
+        txt.required.set(true)
+        sarif.required.set(true)
+      }
+    }
+  }
+
+  plugins.withType<BasePlugin> {
+    plugins.apply(libs.plugins.ktfmt.get().pluginId)
+    ktfmt {
+      kotlinLangStyle()
+      removeUnusedImports = true
+    }
+    plugins.apply(libs.plugins.detekt.get().pluginId)
+
+    extensions.findByType<ApplicationExtension>()?.apply {
+      compileSdk = AndroidConfig.compileSdkVersion
+      defaultConfig {
+        minSdk = AndroidConfig.minSdkVersion
+        targetSdk = AndroidConfig.targetSdkVersion
+      }
+
+      compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
+      }
+
+      packaging {
+        resources.excludes.add("META-INF/LICENSE-LGPL-2.1.txt")
+        resources.excludes.add("META-INF/LICENSE-LGPL-3.txt")
+        resources.excludes.add("META-INF/LICENSE-W3C-TEST")
+        resources.excludes.add("META-INF/DEPENDENCIES")
+      }
+    }
+
+    extensions.findByType<LibraryExtension>()?.apply {
+      compileSdk = AndroidConfig.compileSdkVersion
+      defaultConfig { minSdk = AndroidConfig.minSdkVersion }
+
+      compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
+      }
+
+      packaging {
+        resources.excludes.add("META-INF/LICENSE-LGPL-2.1.txt")
+        resources.excludes.add("META-INF/LICENSE-LGPL-3.txt")
+        resources.excludes.add("META-INF/LICENSE-W3C-TEST")
+        resources.excludes.add("META-INF/DEPENDENCIES")
+      }
+    }
+
+    dependencies { add("coreLibraryDesugaring", libs.desugaring) }
+  }
 }
 
 tasks.register("clean", Delete::class) { delete(rootProject.layout.buildDirectory) }
 
 tasks.register<Copy>("installGitHook") {
-    from("pre-commit")
-    into(layout.projectDirectory.dir(".git/hooks"))
-    fileMode = 777
+  from("pre-commit")
+  into(layout.projectDirectory.dir(".git/hooks"))
 }
 
 afterEvaluate {
-    // We install the hook at the first occasion
-    tasks["clean"].dependsOn(tasks.getByName("installGitHook"))
+  // We install the hook at the first occasion
+  tasks["clean"].dependsOn(tasks.getByName("installGitHook"))
 }
 
 tasks.register<KtfmtFormatTask>("ktfmtPrecommit")
+
+allprojects {
+  tasks.withType<KtfmtFormatTask>().configureEach { exclude("**/build/**") }
+  tasks.withType<KtfmtCheckTask>().configureEach { exclude("**/build/**") }
+}

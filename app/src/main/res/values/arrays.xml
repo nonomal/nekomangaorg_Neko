@@ -9,26 +9,18 @@
         <item>@string/webtoon</item>
     </string-array>
 
+    <string-array name="slider_position">
+        <item>@string/left_align</item>
+        <item>@string/horizontal</item>
+        <item>@string/right_align</item>
+    </string-array>
+
     <string-array name="reader_themes">
         <item>@string/white</item>
         <item>@string/black</item>
         <item>@string/smart_by_page</item>
         <item>@string/smart_by_theme</item>
         <item>@string/smart_by_theme_but_black</item>
-    </string-array>
-
-    <string-array name="hopper_long_press">
-        <item>@string/search</item>
-        <item>@string/expand_collapse_all_categories</item>
-        <item>@string/display_options</item>
-        <item>@string/group_library_by</item>
-        <item>@string/open_random_series</item>
-    </string-array>
-
-    <string-array name="hide_hopper">
-        <item>@string/never</item>
-        <item>@string/hides_on_scroll</item>
-        <item>@string/always</item>
     </string-array>
 
     <string-array name="image_scale_type">
@@ -38,21 +30,6 @@
         <item>@string/fit_height</item>
         <item>@string/original_size</item>
         <item>@string/smart_fit</item>
-    </string-array>
-
-    <string-array name="manga_statuses">
-        <item>@string/unknown_status</item>
-        <item>@string/ongoing</item>
-        <item>@string/completed</item>
-        <item>@string/licensed</item>
-    </string-array>
-
-    <string-array name="series_type">
-        <item>@string/manga</item>
-        <item>@string/manhwa</item>
-        <item>@string/manhua</item>
-        <item>@string/comic</item>
-        <item>@string/webtoon</item>
     </string-array>
 
     <string-array name="webtoon_side_padding">
@@ -106,14 +83,6 @@
         <item>@string/screen</item>
     </string-array>
 
-    <string-array name="show_recent_download">
-        <item>@string/never</item>
-        <item>@string/only_unread</item>
-        <item>@string/only_downloaded</item>
-        <item>@string/unread_or_downloaded</item>
-        <item>@string/always</item>
-    </string-array>
-
     <string-array name="reader_nav">
         <item>@string/default_value</item>
         <item>@string/l_nav</item>
@@ -146,12 +115,6 @@
         <item>@string/pad_cutout_areas</item>
         <item>@string/start_past_cutout</item>
         <item>@string/ignore_cutout_areas</item>
-    </string-array>
-
-    <string-array name="clean_up_downloads">
-        <item>@string/clean_orphaned_downloads</item>
-        <item>@string/clean_read_downloads</item>
-        <item>@string/clean_read_manga_not_in_library</item>
     </string-array>
 
     <string-array name="follows_options">

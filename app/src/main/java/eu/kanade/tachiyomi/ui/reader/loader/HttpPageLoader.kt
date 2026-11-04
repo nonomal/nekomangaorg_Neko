@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.network.httpErrorMessage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
@@ -48,12 +49,12 @@ class HttpPageLoader(
 
         scope.launchIO {
             flow {
-                    while (true) {
-                        emit(runInterruptible { queue.take() }.page)
-                    }
+                while (true) {
+                    emit(runInterruptible { queue.take() })
                 }
-                .filter { it.status == Page.State.QUEUE }
-                .collect { collectPage(it) }
+            }
+                .filter { it.page.status == Page.State.QUEUE }
+                .collect { collectPage(it.page, force = it.priority == PriorityPage.RETRY) }
         }
     }
 
@@ -115,18 +116,16 @@ class HttpPageLoader(
                 page.status = Page.State.QUEUE
             }
 
-            val queuedPages = mutableListOf<PriorityPage>()
+            var priorityPage: PriorityPage? = null
             if (page.status == Page.State.QUEUE) {
-                queuedPages += PriorityPage(page, 1).also { queue.offer(it) }
+                priorityPage = PriorityPage(page, PriorityPage.DEFAULT).also { queue.offer(it) }
             }
-            queuedPages += preloadNextPages(page, preloadSize)
+            preloadNextPages(page, preloadSize)
 
             suspendCancellableCoroutine<Nothing> { continuation ->
                 continuation.invokeOnCancellation {
-                    queuedPages.forEach {
-                        if (it.page.status == Page.State.QUEUE) {
-                            queue.remove(it)
-                        }
+                    if (priorityPage != null && priorityPage.page.status == Page.State.QUEUE) {
+                        queue.remove(priorityPage)
                     }
                 }
             }
@@ -144,8 +143,8 @@ class HttpPageLoader(
         if (pageIndex == pages.lastIndex) return emptyList()
 
         return pages.subList(pageIndex + 1, min(pageIndex + 1 + amount, pages.size)).mapNotNull {
-            if (it.status == Page.State.QUEUE) {
-                PriorityPage(it, 0).apply { queue.offer(this) }
+            if (it.status == Page.State.QUEUE && !queue.any { queued -> queued.page == it }) {
+                PriorityPage(it, PriorityPage.ADJACENT).apply { queue.offer(this) }
             } else {
                 null
             }
@@ -154,19 +153,23 @@ class HttpPageLoader(
 
     /** Retries a page. This method is only called from user interaction on the viewer. */
     override fun retryPage(page: ReaderPage) {
-        if (page.status == Page.State.ERROR) {
+        // A READY page can still fail to decode when its cached file is corrupt, so retry it too
+        // and download the image again instead of decoding the same cached bytes.
+        if (page.status == Page.State.ERROR || page.status == Page.State.READY) {
+            page.stream = null
             page.status = Page.State.QUEUE
         }
-        queue.offer(PriorityPage(page, 2))
+        queue.offer(PriorityPage(page, PriorityPage.RETRY))
     }
 
     /** Data class used to keep ordering of pages in order to maintain priority. */
-    private class PriorityPage(
-        val page: ReaderPage,
-        val priority: Int,
-    ) : Comparable<PriorityPage> {
+    private class PriorityPage(val page: ReaderPage, val priority: Int) : Comparable<PriorityPage> {
         companion object {
             private val idGenerator = AtomicInteger()
+
+            const val RETRY = 2
+            const val DEFAULT = 1
+            const val ADJACENT = 0
         }
 
         private val identifier = idGenerator.incrementAndGet()
@@ -182,19 +185,27 @@ class HttpPageLoader(
      * images are stored in the chapter cache.
      *
      * @param page the page whose source image has to be downloaded.
+     * @param force download the image even when it is already in the cache.
      */
-    private suspend fun collectPage(page: ReaderPage) {
+    private suspend fun collectPage(page: ReaderPage, force: Boolean) {
         try {
             val imageUrl = page.imageUrl!!
-            if (!chapterCache.isImageInCache(imageUrl)) {
+            if (force || !chapterCache.isImageInCache(imageUrl)) {
                 page.status = Page.State.DOWNLOAD_IMAGE
                 val imageResponse = source.getImage(page)
+                if (!imageResponse.isSuccessful) {
+                    imageResponse.close()
+                    throw Exception(
+                        httpErrorMessage(imageResponse.code, imageResponse.request.url.host)
+                    )
+                }
                 chapterCache.putImageToCache(imageUrl, imageResponse)
             }
 
             page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
             page.status = Page.State.READY
         } catch (e: Throwable) {
+            page.errorMessage = e.message ?: e.javaClass.simpleName
             page.status = Page.State.ERROR
             if (e is CancellationException) {
                 throw e

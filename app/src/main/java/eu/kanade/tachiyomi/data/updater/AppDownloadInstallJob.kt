@@ -22,20 +22,19 @@ import androidx.work.WorkerParameters
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.util.lang.orUnknownError
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.storage.saveTo
 import eu.kanade.tachiyomi.util.system.connectivityManager
 import eu.kanade.tachiyomi.util.system.jobIsRunning
-import eu.kanade.tachiyomi.util.system.launchUI
-import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.tryToSetForeground
 import eu.kanade.tachiyomi.util.system.withIOContext
+import eu.kanade.tachiyomi.util.system.withUIContext
 import java.io.File
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -71,13 +70,12 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
     }
 
     override suspend fun doWork(): Result {
+        tryToSetForeground()
         val idleRun = inputData.getBoolean(IDLE_RUN, false)
         val url: String
+        val version: String
         if (idleRun) {
-            if (
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                    !context.packageManager.canRequestPackageInstalls()
-            ) {
+            if (!context.packageManager.canRequestPackageInstalls()) {
                 return Result.failure()
             }
             if (
@@ -88,25 +86,38 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
             }
 
             val result = withIOContext {
-                AppUpdateChecker().checkForUpdate(context, true, doExtrasAfterNewUpdate = false)
+                AppUpdateChecker()
+                    .checkForUpdate(isUserPrompt = true, doExtrasAfterNewUpdate = false)
             }
             if (result is AppUpdateResult.NewUpdate) {
                 AppUpdateNotifier(context).cancel()
                 AppUpdateNotifier.releasePageUrl = result.release.releaseLink
                 url = result.release.downloadLink
+                version = result.release.version
             } else {
                 return Result.success()
             }
         } else {
             url = inputData.getString(EXTRA_DOWNLOAD_URL) ?: return Result.failure()
+            version = inputData.getString(EXTRA_VERSION) ?: return Result.failure()
         }
 
-        tryToSetForeground()
+        // Persist the version being downloaded so it survives process death and can be
+        // checked by start() when the user tries to trigger another download of the same version.
+        PreferenceManager.getDefaultSharedPreferences(context).edit {
+            putString(DOWNLOADING_VERSION_KEY, version)
+        }
+
         instance = WeakReference(this)
 
         val notifyOnInstall = inputData.getBoolean(EXTRA_NOTIFY_ON_INSTALL, false)
 
-        withIOContext { downloadApk(url, notifyOnInstall) }
+        withIOContext { downloadApk(url, notifyOnInstall, version) }
+
+        // Clear the downloading version now that the job has finished (success or handled error).
+        PreferenceManager.getDefaultSharedPreferences(context).edit {
+            remove(DOWNLOADING_VERSION_KEY)
+        }
 
         runningCall?.cancel()
         instance = null
@@ -118,63 +129,64 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
      *
      * @param url url location of file
      */
-    private suspend fun downloadApk(url: String, notifyOnInstall: Boolean) = coroutineScope {
-        val progressListener =
-            object : ProgressListener {
-                // Progress of the download
-                var savedProgress = 0
+    private suspend fun downloadApk(url: String, notifyOnInstall: Boolean, version: String) =
+        coroutineScope {
+            val progressListener =
+                object : ProgressListener {
+                    // Progress of the download
+                    var savedProgress = 0
 
-                // Keep track of the last notification sent to avoid posting too many.
-                var lastTick = 0L
+                    // Keep track of the last notification sent to avoid posting too many.
+                    var lastTick = 0L
 
-                override fun update(bytesRead: Long, contentLength: Long, done: Boolean) {
-                    val progress = (100 * (bytesRead.toFloat() / contentLength)).toInt()
-                    val currentTime = System.currentTimeMillis()
-                    if (progress > savedProgress && currentTime - 200 > lastTick) {
-                        savedProgress = progress
-                        lastTick = currentTime
-                        notifier.onProgressChange(progress)
+                    override fun update(bytesRead: Long, contentLength: Long, done: Boolean) {
+                        val progress = (100 * (bytesRead.toFloat() / contentLength)).toInt()
+                        val currentTime = System.currentTimeMillis()
+                        if (progress > savedProgress && currentTime - 200 > lastTick) {
+                            savedProgress = progress
+                            lastTick = currentTime
+                            notifier.onProgressChange(progress)
+                        }
                     }
                 }
-            }
 
-        try {
-            // Download the new update.
-            val call = network.client.newCachelessCallWithProgress(GET(url), progressListener)
-            runningCall = call
-            val response = call.await()
-            if (isStopped) {
-                cancel()
-                return@coroutineScope
-            }
+            try {
+                // Download the new update.
+                val call = network.client.newCachelessCallWithProgress(GET(url), progressListener)
+                runningCall = call
+                val response = call.await()
+                if (isStopped) {
+                    cancel()
+                    return@coroutineScope
+                }
 
-            // File where the apk will be saved.
-            val apkFile = File(context.externalCacheDir, "update.apk")
+                // File where the apk will be saved.
+                val apkFile = File(context.externalCacheDir, "update.apk")
 
-            if (response.isSuccessful) {
-                response.body.source().saveTo(apkFile)
-            } else {
-                response.close()
-                throw Exception("Unsuccessful response")
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                startInstalling(apkFile, notifyOnInstall)
-            } else {
-                notifier.onDownloadFinished(apkFile.getUriCompat(context))
-            }
-        } catch (error: Exception) {
-            TimberKt.e(error)
-            if (
-                error is CancellationException ||
-                    isStopped ||
-                    (error is StreamResetException && error.errorCode == ErrorCode.CANCEL)
-            ) {
-                notifier.cancel()
-            } else {
-                notifier.onDownloadError(url)
+                if (response.isSuccessful) {
+                    response.body.source().saveTo(apkFile)
+                } else {
+                    response.close()
+                    throw Exception("Unsuccessful response")
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    startInstalling(apkFile, notifyOnInstall)
+                } else {
+                    notifier.onDownloadFinished(apkFile.getUriCompat(context))
+                }
+            } catch (error: Exception) {
+                TimberKt.e(error)
+                if (
+                    error is CancellationException ||
+                        isStopped ||
+                        (error is StreamResetException && error.errorCode == ErrorCode.CANCEL)
+                ) {
+                    notifier.cancel()
+                } else {
+                    notifier.onDownloadError(url, version)
+                }
             }
         }
-    }
 
     @RequiresApi(31)
     private suspend fun startInstalling(file: File, notifyOnInstall: Boolean) {
@@ -183,9 +195,7 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
             val data = file.inputStream()
 
             val params =
-                PackageInstaller.SessionParams(
-                    PackageInstaller.SessionParams.MODE_FULL_INSTALL,
-                )
+                PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
             params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
             val sessionId = packageInstaller.createSession(params)
             val session = packageInstaller.openSession(sessionId)
@@ -209,34 +219,32 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
                     context,
                     -10053,
                     newIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
                 )
             val statusReceiver = pendingIntent.intentSender
+            val startVersion =
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
             session.commit(statusReceiver)
             notifier.onInstalling()
-            withContext(Dispatchers.IO) {
-                data.close()
-                GlobalScope.launchUI {
-                    delay(5000)
-                    val hasNotification =
-                        context.notificationManager.activeNotifications.any {
-                            it.id == Notifications.ID_UPDATER
-                        }
-                    // If the package manager crashes for whatever reason (china phone)
-                    // set a timeout and let the user manually install
-                    if (packageInstaller.getSessionInfo(sessionId) == null && !hasNotification) {
-                        notifier.cancelInstallNotification()
-                        notifier.onDownloadFinished(file.getUriCompat(context))
-                        PreferenceManager.getDefaultSharedPreferences(context).edit {
-                            remove(NOTIFY_ON_INSTALL_KEY)
-                        }
+
+            withContext(Dispatchers.IO) { data.close() }
+            withUIContext {
+                delay(5000)
+                val currentVersion =
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                if (startVersion == currentVersion) {
+                    notifier.cancelInstallNotification()
+                    notifier.onDownloadFinished(file.getUriCompat(context))
+                    PreferenceManager.getDefaultSharedPreferences(context).edit {
+                        remove(NOTIFY_ON_INSTALL_KEY)
                     }
                 }
             }
         } catch (error: Exception) {
+            if (error is CancellationException) throw error
             // Either install package can't be found (probably bots) or there's a security exception
             // with the download manager. Nothing we can workaround.
-            context.toast(error.message)
+            withContext(Dispatchers.Main) { context.toast(error.message.orUnknownError(context)) }
             notifier.cancelInstallNotification()
             notifier.onDownloadFinished(file.getUriCompat(context))
             PreferenceManager.getDefaultSharedPreferences(context).edit {
@@ -252,7 +260,9 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
         internal const val EXTRA_FILE_URI = "${BuildConfig.APPLICATION_ID}.AppInstaller.FILE_URI"
         internal const val EXTRA_NOTIFY_ON_INSTALL = "ACTION_ON_INSTALL"
         internal const val EXTRA_DOWNLOAD_URL = "DOWNLOAD_URL"
+        internal const val EXTRA_VERSION = "DOWNLOAD_VERSION"
         internal const val NOTIFY_ON_INSTALL_KEY = "notify_on_install_complete"
+        internal const val DOWNLOADING_VERSION_KEY = "downloading_version"
         private const val IDLE_RUN = "idle_run"
 
         const val ALWAYS = 0
@@ -261,15 +271,29 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
 
         private var instance: WeakReference<AppDownloadInstallJob>? = null
 
-        fun start(
+        suspend fun start(
             context: Context,
             url: String?,
             notifyOnInstall: Boolean,
-            waitUntilIdle: Boolean = false
+            waitUntilIdle: Boolean = false,
+            version: String,
         ) {
+            // Idempotency guard: if the exact same version is already downloading, do nothing.
+            // If a *different* (newer) version is requested we fall through and WorkManager's
+            // REPLACE policy will cancel the old job and start a fresh one.
+            if (isRunning(context)) {
+                val downloadingVersion =
+                    PreferenceManager.getDefaultSharedPreferences(context)
+                        .getString(DOWNLOADING_VERSION_KEY, null)
+                if (downloadingVersion != null && downloadingVersion == version) {
+                    return
+                }
+            }
+
             val data = Data.Builder()
             data.putString(EXTRA_DOWNLOAD_URL, url)
             data.putBoolean(EXTRA_NOTIFY_ON_INSTALL, notifyOnInstall)
+            data.putString(EXTRA_VERSION, version)
             val request =
                 OneTimeWorkRequestBuilder<AppDownloadInstallJob>()
                     .addTag(TAG)
@@ -285,7 +309,7 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
                                             NetworkType.CONNECTED
                                         } else {
                                             NetworkType.UNMETERED
-                                        },
+                                        }
                                     )
                                     .setRequiresDeviceIdle(true)
                                     .build()
@@ -303,8 +327,13 @@ class AppDownloadInstallJob(private val context: Context, workerParams: WorkerPa
         fun stop(context: Context) {
             instance?.get()?.runningCall?.cancel()
             WorkManager.getInstance(context).cancelUniqueWork(TAG)
+            // Clear the persisted version so a fresh start is allowed after an explicit stop.
+            PreferenceManager.getDefaultSharedPreferences(context).edit {
+                remove(DOWNLOADING_VERSION_KEY)
+            }
         }
 
-        fun isRunning(context: Context) = WorkManager.getInstance(context).jobIsRunning(TAG)
+        private suspend fun isRunning(context: Context) =
+            WorkManager.getInstance(context).jobIsRunning(TAG)
     }
 }

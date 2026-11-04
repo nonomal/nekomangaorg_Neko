@@ -3,13 +3,16 @@ package eu.kanade.tachiyomi.data.track.kitsu
 import android.content.Context
 import android.graphics.Color
 import androidx.annotation.StringRes
+import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.data.track.updateNewTrackInfo
 import java.text.DecimalFormat
-import kotlinx.serialization.encodeToString
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.serialization.json.Json
 import org.nekomanga.R
 import org.nekomanga.logging.TimberKt
@@ -92,8 +95,19 @@ class Kitsu(private val context: Context, id: Int) : TrackService(id) {
         return df.format(track.score)
     }
 
-    override suspend fun update(track: Track, setToRead: Boolean): Track {
-        updateTrackStatus(track, setToRead, setToComplete = true, mustReadToComplete = false)
+    override suspend fun update(
+        track: Track,
+        setToRead: Boolean,
+        manga: Manga?,
+        chapters: List<Chapter>?,
+    ): Track {
+        updateTrackStatus(
+            track,
+            setToRead,
+            mustReadToComplete = false,
+            manga = manga,
+            chapters = chapters,
+        )
         return api.updateLibManga(track)
     }
 
@@ -170,5 +184,22 @@ class Kitsu(private val context: Context, id: Int) : TrackService(id) {
         } catch (e: Exception) {
             null
         }
+    }
+
+    override fun isLogged(): Boolean {
+        return super.isLogged() && restoreToken() != null
+    }
+
+    override fun isLoggedInFlow(): Flow<Boolean> {
+        return combine(super.isLoggedInFlow(), preferences.trackToken(this).changes()) {
+                loggedIn,
+                token ->
+                val hasValidToken = runCatching {
+                    token.isNotBlank() && json.decodeFromString<OAuth?>(token) != null
+                }
+                    .getOrDefault(false)
+                loggedIn && hasValidToken
+            }
+            .distinctUntilChanged()
     }
 }

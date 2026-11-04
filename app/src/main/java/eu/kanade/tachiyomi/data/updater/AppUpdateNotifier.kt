@@ -41,9 +41,10 @@ internal class AppUpdateNotifier(private val context: Context) {
         context.notificationManager.notify(id, build())
     }
 
-    fun promptUpdate(body: String, url: String, releaseUrl: String) {
+    fun promptUpdate(body: String, url: String, releaseUrl: String, version: String) {
 
-        val pendingIntent = NotificationReceiver.openUpdatePendingActivity(context, body, url)
+        val pendingIntent =
+            NotificationReceiver.openUpdatePendingActivity(context, body, url, releaseUrl, version)
         releasePageUrl = releaseUrl
         with(notificationBuilder) {
             setContentTitle(context.getString(R.string.app_name))
@@ -58,7 +59,7 @@ internal class AppUpdateNotifier(private val context: Context) {
             addAction(
                 android.R.drawable.stat_sys_download_done,
                 context.getString(if (isOnA12) R.string.update else R.string.download),
-                NotificationReceiver.startAppUpdatePendingJob(context, url, true),
+                NotificationReceiver.startAppUpdatePendingJob(context, url, version, true),
             )
             addReleasePageAction()
         }
@@ -78,7 +79,7 @@ internal class AppUpdateNotifier(private val context: Context) {
                     context,
                     releaseUrl.hashCode(),
                     releaseIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),
             )
         }
@@ -168,7 +169,7 @@ internal class AppUpdateNotifier(private val context: Context) {
                 context.getString(R.string.cancel),
                 NotificationReceiver.dismissNotificationPendingBroadcast(
                     context,
-                    Notifications.ID_INSTALL
+                    Notifications.ID_INSTALL,
                 ),
             )
             addReleasePageAction()
@@ -213,20 +214,20 @@ internal class AppUpdateNotifier(private val context: Context) {
      *
      * @param url web location of apk to download.
      */
-    fun onDownloadError(url: String) {
+    fun onDownloadError(url: String, version: String) {
         with(notificationBuilder) {
             setContentText(context.getString(R.string.download_error))
             setSmallIcon(android.R.drawable.stat_sys_warning)
             setOnlyAlertOnce(false)
             setAutoCancel(false)
             setProgress(0, 0, false)
-            color = ContextCompat.getColor(context, R.color.secondaryTachiyomi)
+            color = ContextCompat.getColor(context, R.color.colorSecondary)
             clearActions()
             // Retry action
             addAction(
                 R.drawable.ic_refresh_24dp,
                 context.getString(R.string.retry),
-                NotificationReceiver.startAppUpdatePendingJob(context, url),
+                NotificationReceiver.startAppUpdatePendingJob(context, url, version),
             )
             // Cancel action
             addAction(
@@ -250,7 +251,7 @@ internal class AppUpdateNotifier(private val context: Context) {
             setOnlyAlertOnce(false)
             setAutoCancel(false)
             setProgress(0, 0, false)
-            color = ContextCompat.getColor(context, R.color.secondaryTachiyomi)
+            color = ContextCompat.getColor(context, R.color.colorSecondary)
             clearActions()
             // Retry action
             addAction(

@@ -1,0 +1,99 @@
+package org.nekomanga.presentation.screens.settings.screens
+
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import androidx.fragment.app.FragmentActivity
+import eu.kanade.tachiyomi.ui.security.SecureActivityDelegate
+import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.authenticate
+import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.isAuthenticationSupported
+import eu.kanade.tachiyomi.util.system.getActivity
+import java.util.Date
+import org.nekomanga.R
+import org.nekomanga.core.security.SecurityPreferences
+import org.nekomanga.presentation.screens.settings.Preference
+import org.nekomanga.presentation.screens.settings.widgets.SearchTerm
+
+internal class SecuritySettingsScreen(
+    incognitoMode: Boolean,
+    val securityPreferences: SecurityPreferences,
+    onNavigationIconClick: (() -> Unit)?,
+) : SearchableSettings(onNavigationIconClick, incognitoMode) {
+
+    override fun getTitleRes(): Int = R.string.security
+
+    @Composable
+    override fun getPreferences(): List<Preference> {
+        val context = LocalContext.current
+        return listOf(
+            Preference.PreferenceItem.SwitchPreference(
+                pref = securityPreferences.useBiometrics(),
+                title = stringResource(R.string.lock_with_biometrics),
+                enabled = context.isAuthenticationSupported(),
+                onValueChanged = {
+                    val activity = context.getActivity() as? FragmentActivity
+                    val authenticated =
+                        activity?.authenticate(
+                            title = context.getString(R.string.lock_with_biometrics)
+                        ) ?: false
+                    if (authenticated) {
+                        SecureActivityDelegate.locked = false
+                        securityPreferences.lastUnlock().set(Date().time)
+                    }
+                    authenticated
+                },
+            ),
+            Preference.PreferenceItem.ListPreference(
+                pref = securityPreferences.lockAfter(),
+                enabled = securityPreferences.useBiometrics().get(),
+                title = stringResource(R.string.lock_when_idle),
+                entries =
+                    listOf(0, 2, 5, 10, 20, 30, 60, 90, 120, -1)
+                        .associate {
+                            when (it) {
+                                0 -> it to stringResource(R.string.always)
+                                -1 -> it to stringResource(R.string.never)
+                                else -> it to pluralStringResource(R.plurals.after_minutes, it, it)
+                            }
+                        }
+                        .toMap(),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                pref = securityPreferences.hideNotificationContent(),
+                title = stringResource(R.string.hide_notification_content),
+            ),
+            Preference.PreferenceItem.ListPreference(
+                pref = securityPreferences.secureScreen(),
+                title = stringResource(R.string.secure_screen),
+                entries =
+                    SecurityPreferences.SecureScreenMode.entries
+                        .associate { it to stringResource(it.titleResId) }
+                        .toMap(),
+                onValueChanged = { newValue ->
+                    securityPreferences.secureScreen().set(newValue)
+                    val activity = context.getActivity()
+                    if (activity != null) {
+                        SecureActivityDelegate.setSecure(activity)
+                    }
+                    true
+                },
+            ),
+            Preference.PreferenceItem.InfoPreference(
+                title = stringResource(R.string.secure_screen_summary)
+            ),
+        )
+    }
+
+    companion object : SearchTermProvider {
+        @Composable
+        override fun getSearchTerms(): List<SearchTerm> {
+            return listOf(
+                SearchTerm(stringResource(R.string.lock_with_biometrics)),
+                SearchTerm(stringResource(R.string.lock_when_idle)),
+                SearchTerm(stringResource(R.string.hide_notification_content)),
+                SearchTerm(stringResource(R.string.secure_screen)),
+            )
+        }
+    }
+}

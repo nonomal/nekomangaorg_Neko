@@ -60,6 +60,14 @@ data class MangaUpdatesLink(override val id: String) : ExternalLink() {
         }
 }
 
+data class MangaBakaLink(override val id: String) : ExternalLink() {
+    override val name = "MangaBaka"
+    override val logo = R.drawable.ic_tracker_mangabaka
+    override val logoColor: Long = 0xFF121923
+
+    override fun getUrl() = if (id.isNotBlank()) "https://mangabaka.org/$id" else ""
+}
+
 data class Dex(override val id: String) : ExternalLink() {
     override val name = "MangaDex"
     override val logo = R.drawable.ic_tracker_mangadex_logo
@@ -122,7 +130,7 @@ data class Kitsu(override val id: String) : ExternalLink() {
     override val logo = R.drawable.ic_tracker_kitsu_logo
     override val logoColor: Long = 0xFF332532
 
-    override fun getUrl() = "https://kitsu.io/manga/$id"
+    override fun getUrl() = "https://kitsu.app/manga/$id"
 }
 
 sealed class ExternalLink {

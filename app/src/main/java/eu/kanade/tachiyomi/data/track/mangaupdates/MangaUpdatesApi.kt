@@ -30,10 +30,7 @@ import tachiyomi.core.network.await
 import tachiyomi.core.network.parseAs
 import uy.kohesive.injekt.injectLazy
 
-class MangaUpdatesApi(
-    interceptor: MangaUpdatesInterceptor,
-    private val client: OkHttpClient,
-) {
+class MangaUpdatesApi(interceptor: MangaUpdatesInterceptor, private val client: OkHttpClient) {
     private val baseUrl = "https://api.mangaupdates.com"
     private val contentType = "application/vnd.api+json".toMediaType()
 
@@ -45,11 +42,7 @@ class MangaUpdatesApi(
         val listItem =
             with(json) {
                 authClient
-                    .newCall(
-                        GET(
-                            url = "$baseUrl/v1/lists/series/${track.media_id}",
-                        ),
-                    )
+                    .newCall(GET(url = "$baseUrl/v1/lists/series/${track.media_id}"))
                     .await()
                     .parseAs<ListItem>()
             }
@@ -65,7 +58,7 @@ class MangaUpdatesApi(
                 POST(
                     url = "$baseUrl/v1/lists/series",
                     body = body.toString().toRequestBody(contentType),
-                ),
+                )
             )
             .await()
     }
@@ -77,7 +70,7 @@ class MangaUpdatesApi(
                 POST(
                     url = "$baseUrl/v1/lists/series/delete",
                     body = body.toString().toRequestBody(contentType),
-                ),
+                )
             )
             .await()
             .let {
@@ -92,7 +85,7 @@ class MangaUpdatesApi(
                 POST(
                     url = "$baseUrl/v1/lists/series/update",
                     body = body.toString().toRequestBody(contentType),
-                ),
+                )
             )
             .await()
 
@@ -111,11 +104,7 @@ class MangaUpdatesApi(
         return try {
             with(json) {
                 authClient
-                    .newCall(
-                        GET(
-                            url = "$baseUrl/v1/series/${track.media_id}/rating",
-                        ),
-                    )
+                    .newCall(GET(url = "$baseUrl/v1/series/${track.media_id}/rating"))
                     .await()
                     .parseAs<Rating>()
             }
@@ -132,17 +121,11 @@ class MangaUpdatesApi(
                     PUT(
                         url = "$baseUrl/v1/series/${track.media_id}/rating",
                         body = body.toString().toRequestBody(contentType),
-                    ),
+                    )
                 )
                 .await()
         } else {
-            authClient
-                .newCall(
-                    DELETE(
-                        url = "$baseUrl/v1/series/${track.media_id}/rating",
-                    ),
-                )
-                .await()
+            authClient.newCall(DELETE(url = "$baseUrl/v1/series/${track.media_id}/rating")).await()
         }
     }
 
@@ -151,15 +134,17 @@ class MangaUpdatesApi(
             val muId = getMangaUpdatesApiId(manga)
 
             if (muId != null) {
-                with(json) {
-                    return client
-                        .newCall(
-                            GET("$baseUrl/v1/series/$muId"),
-                        )
-                        .await()
-                        .parseAs<JsonObject>()
-                        .let { obj -> listOf(json.decodeFromJsonElement<Record>(obj)) }
-                        .orEmpty()
+                try {
+                    with(json) {
+                        return client
+                            .newCall(GET("$baseUrl/v1/series/$muId"))
+                            .await()
+                            .parseAs<JsonObject>()
+                            .let { obj -> listOf(json.decodeFromJsonElement<Record>(obj)) }
+                            .orEmpty()
+                    }
+                } catch (e: Exception) {
+                    TimberKt.e(e) { "Error searching by MangaUpdates ID" }
                 }
             }
         }
@@ -180,7 +165,7 @@ class MangaUpdatesApi(
                     POST(
                         url = "$baseUrl/v1/series/search",
                         body = body.toString().toRequestBody(contentType),
-                    ),
+                    )
                 )
                 .await()
                 .parseAs<JsonObject>()
@@ -204,7 +189,7 @@ class MangaUpdatesApi(
                     PUT(
                         url = "$baseUrl/v1/account/login",
                         body = body.toString().toRequestBody(contentType),
-                    ),
+                    )
                 )
                 .await()
                 .parseAs<JsonObject>()

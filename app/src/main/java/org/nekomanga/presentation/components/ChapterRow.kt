@@ -1,6 +1,5 @@
 package org.nekomanga.presentation.components
 
-import androidx.appcompat.content.res.AppCompatResources
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -8,33 +7,31 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.DismissDirection
-import androidx.compose.material.DismissState
-import androidx.compose.material.DismissValue
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.BookmarkRemove
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.rememberDismissState
-import androidx.compose.material.ripple.LocalRippleTheme
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,453 +41,450 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.online.utils.MdLang
-import eu.kanade.tachiyomi.ui.manga.MangaConstants.DownloadAction
+import eu.kanade.tachiyomi.ui.manga.MangaConstants
 import eu.kanade.tachiyomi.util.chapter.ChapterUtil
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import jp.wasabeef.gap.Gap
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.toImmutableList
-import kotlinx.collections.immutable.toPersistentList
-import kotlinx.coroutines.launch
+import me.saket.swipe.SwipeAction
 import org.nekomanga.R
 import org.nekomanga.constants.Constants
-import org.nekomanga.core.util.launchDelayed
-import org.nekomanga.logging.TimberKt
+import org.nekomanga.constants.MdConstants
+import org.nekomanga.domain.chapter.ChapterItem
 import org.nekomanga.presentation.components.dropdown.SimpleDropDownItem
 import org.nekomanga.presentation.components.dropdown.SimpleDropdownMenu
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.extensions.conditional
 import org.nekomanga.presentation.extensions.surfaceColorAtElevationCustomColor
-import org.nekomanga.presentation.screens.ThemeColorState
 import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun ChapterRow(
     themeColor: ThemeColorState,
-    title: String,
-    scanlator: String,
-    language: String?,
-    chapterNumber: Double,
-    dateUploaded: Long,
-    lastPageRead: Int,
-    pagesLeft: Int,
-    read: Boolean,
-    bookmark: Boolean,
-    isMerged: Boolean,
-    downloadStateProvider: () -> Download.State,
-    downloadProgressProvider: () -> Int,
+    chapterItem: ChapterItem,
     shouldHideChapterTitles: Boolean = false,
-    onClick: () -> Unit,
-    onBookmark: () -> Unit,
-    onWebView: () -> Unit,
-    onComment: () -> Unit,
-    onRead: () -> Unit,
-    blockScanlator: (String) -> Unit,
-    markPrevious: (Boolean) -> Unit,
-    onDownload: (DownloadAction) -> Unit,
+    swipeRightAction: MangaConstants.ChapterSwipeAction =
+        MangaConstants.ChapterSwipeAction.ToggleBookmark,
+    swipeLeftAction: MangaConstants.ChapterSwipeAction =
+        MangaConstants.ChapterSwipeAction.ToggleRead,
+    onClick: (ChapterItem) -> Unit,
+    onBookmark: (ChapterItem) -> Unit,
+    onRead: (ChapterItem) -> Unit,
+    onWebView: (ChapterItem) -> Unit,
+    onComment: (String) -> Unit,
+    onDownload: (List<ChapterItem>, MangaConstants.DownloadAction) -> Unit,
+    blockScanlator: (MangaConstants.BlockType, String) -> Unit,
+    markPrevious: (ChapterItem, Boolean) -> Unit,
 ) {
-    CompositionLocalProvider(LocalRippleTheme provides themeColor.rippleTheme) {
-        val dismissState = rememberDismissState(initialValue = DismissValue.Default)
-        NekoSwipeToDismiss(
-            state = dismissState,
-            modifier = Modifier.padding(vertical = Dp(1f)),
-            background = {
-                val color =
-                    when (dismissState.dismissDirection) {
-                        null -> MaterialTheme.colorScheme.surface
-                        else ->
-                            MaterialTheme.colorScheme.surfaceColorAtElevationCustomColor(
-                                themeColor.buttonColor,
-                                8.dp
-                            )
-                    }
+    CompositionLocalProvider(LocalRippleConfiguration provides themeColor.rippleConfiguration) {
+        val swipeActionBackgroundColor =
+            MaterialTheme.colorScheme.surfaceColorAtElevationCustomColor(
+                themeColor.primaryColor,
+                Size.small,
+            )
 
-                when (dismissState.dismissDirection) {
-                    DismissDirection.EndToStart -> {
-                        val (icon, text) =
-                            when (read) {
-                                true -> Icons.Default.VisibilityOff to R.string.mark_as_unread
-                                false -> Icons.Default.Visibility to R.string.mark_as_read
-                            }
-                        Background(
-                            icon,
-                            Alignment.CenterEnd,
-                            color,
-                            stringResource(id = text),
-                            themeColor.buttonColor
-                        )
+        val rightSwipeAction =
+            chapterSwipeAction(
+                action = swipeRightAction,
+                chapterItem = chapterItem,
+                themeColor = themeColor,
+                background = swipeActionBackgroundColor,
+                onBookmark = onBookmark,
+                onRead = onRead,
+                onDownload = onDownload,
+            )
+        val leftSwipeAction =
+            chapterSwipeAction(
+                action = swipeLeftAction,
+                chapterItem = chapterItem,
+                themeColor = themeColor,
+                background = swipeActionBackgroundColor,
+                onBookmark = onBookmark,
+                onRead = onRead,
+                onDownload = onDownload,
+            )
+
+        // The app theme forces LTR, so swiping right reveals the start actions.
+        ChapterSwipe(
+            startSwipeActions = listOfNotNull(rightSwipeAction),
+            endSwipeActions = listOfNotNull(leftSwipeAction),
+        ) {
+            ChapterRowContent(
+                themeColorState = themeColor,
+                shouldHideChapterTitles = shouldHideChapterTitles,
+                chapterItem = chapterItem,
+                onClick = onClick,
+                onWebView = onWebView,
+                onComment = onComment,
+                onDownload = onDownload,
+                markPrevious = markPrevious,
+                blockScanlator = blockScanlator,
+            )
+        }
+    }
+}
+
+/** Swipe action for one side of the row, or null when that side should do nothing. */
+@Composable
+private fun chapterSwipeAction(
+    action: MangaConstants.ChapterSwipeAction,
+    chapterItem: ChapterItem,
+    themeColor: ThemeColorState,
+    background: Color,
+    onBookmark: (ChapterItem) -> Unit,
+    onRead: (ChapterItem) -> Unit,
+    onDownload: (List<ChapterItem>, MangaConstants.DownloadAction) -> Unit,
+): SwipeAction? {
+    val (icon, textRes, onSwipe) =
+        when (action) {
+            MangaConstants.ChapterSwipeAction.Disabled -> return null
+            MangaConstants.ChapterSwipeAction.ToggleRead -> {
+                val (readIcon, readTextRes) =
+                    if (chapterItem.chapter.read)
+                        Icons.Default.VisibilityOff to R.string.mark_as_unread
+                    else Icons.Default.Visibility to R.string.mark_as_read
+                Triple(readIcon, readTextRes) { onRead(chapterItem) }
+            }
+            MangaConstants.ChapterSwipeAction.ToggleBookmark -> {
+                val (bookmarkIcon, bookmarkTextRes) =
+                    if (chapterItem.chapter.bookmark)
+                        Icons.Default.BookmarkRemove to R.string.remove_bookmark
+                    else Icons.Default.BookmarkAdd to R.string.add_bookmark
+                Triple(bookmarkIcon, bookmarkTextRes) { onBookmark(chapterItem) }
+            }
+            MangaConstants.ChapterSwipeAction.Download -> {
+                when (chapterItem.downloadState) {
+                    Download.State.DOWNLOADED ->
+                        Triple(Icons.Default.Delete, R.string.remove) {
+                            onDownload(listOf(chapterItem), MangaConstants.DownloadAction.Remove)
+                        }
+                    Download.State.QUEUE,
+                    Download.State.DOWNLOADING,
+                    Download.State.ERROR ->
+                        Triple(Icons.Default.Cancel, R.string.cancel) {
+                            onDownload(listOf(chapterItem), MangaConstants.DownloadAction.Cancel)
+                        }
+                    Download.State.NOT_DOWNLOADED -> {
+                        val isLocked =
+                            chapterItem.chapter.isUnavailable ||
+                                MdConstants.UnsupportedOfficialGroupList.contains(
+                                    chapterItem.chapter.scanlator
+                                )
+                        if (isLocked) return null
+                        Triple(Icons.Default.Download, R.string.download) {
+                            onDownload(listOf(chapterItem), MangaConstants.DownloadAction.Download)
+                        }
                     }
-                    DismissDirection.StartToEnd -> {
-                        val (icon, text) =
-                            when (bookmark) {
-                                true -> Icons.Default.BookmarkRemove to R.string.remove_bookmark
-                                false -> Icons.Default.BookmarkAdd to R.string.add_bookmark
-                            }
-                        Background(
-                            icon,
-                            Alignment.CenterStart,
-                            color,
-                            stringResource(id = text),
-                            themeColor.buttonColor
-                        )
-                    }
-                    else -> Unit
                 }
-            },
-            dismissContent = {
-                ChapterInfo(
-                    themeColorState = themeColor,
-                    shouldHideChapterTitles = shouldHideChapterTitles,
-                    title = title,
-                    scanlator = scanlator,
-                    language = language,
-                    chapterNumber = chapterNumber,
-                    dateUploaded = dateUploaded,
-                    lastPageRead = lastPageRead,
-                    pagesLeft = pagesLeft,
-                    read = read,
-                    bookmark = bookmark,
-                    downloadStateProvider = downloadStateProvider,
-                    downloadProgressProvider = downloadProgressProvider,
-                    onClick = onClick,
-                    onWebView = onWebView,
-                    onComment = onComment,
-                    onDownload = onDownload,
-                    markPrevious = markPrevious,
-                    isMerged = isMerged,
-                    blockScanlator = blockScanlator,
-                )
-            },
-        )
-        when {
-            dismissState.isDismissed(DismissDirection.EndToStart) ->
-                Reset(dismissState = dismissState, action = onRead)
-            dismissState.isDismissed(DismissDirection.StartToEnd) ->
-                Reset(dismissState = dismissState, action = onBookmark)
+            }
         }
-    }
-}
 
-@Composable
-private fun Reset(dismissState: DismissState, action: () -> Unit) {
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(key1 = dismissState.dismissDirection) {
-        scope.launch {
-            dismissState.reset()
-            action()
-        }
-    }
-}
-
-@Composable
-private fun Background(
-    icon: ImageVector,
-    alignment: Alignment,
-    color: Color,
-    text: String,
-    contentColor: Color
-) {
-    Box(
-        Modifier.fillMaxSize().background(color).padding(horizontal = Dp(20f)),
-        contentAlignment = alignment,
-    ) {
-        Column(modifier = Modifier.align(alignment)) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
+    return SwipeAction(
+        icon = {
+            SwipeIcon(
+                icon = icon,
+                text = stringResource(textRes),
+                contentColor = themeColor.primaryColor,
             )
-            Text(
-                text = text,
-                textAlign = TextAlign.Center,
-                color = contentColor,
-            )
-        }
-    }
+        },
+        background = background,
+        onSwipe = onSwipe,
+    )
 }
 
 @Composable
-private fun ChapterInfo(
+private fun ChapterRowContent(
     themeColorState: ThemeColorState,
     shouldHideChapterTitles: Boolean,
-    title: String,
-    scanlator: String,
-    language: String?,
-    chapterNumber: Double,
-    dateUploaded: Long,
-    lastPageRead: Int,
-    pagesLeft: Int,
-    read: Boolean,
-    bookmark: Boolean,
-    downloadStateProvider: () -> Download.State,
-    downloadProgressProvider: () -> Int,
-    onClick: () -> Unit,
-    onWebView: () -> Unit,
-    onComment: () -> Unit,
-    onDownload: (DownloadAction) -> Unit,
-    markPrevious: (Boolean) -> Unit,
-    isMerged: Boolean = false,
-    blockScanlator: (String) -> Unit,
+    chapterItem: ChapterItem,
+    onClick: (ChapterItem) -> Unit,
+    onWebView: (ChapterItem) -> Unit,
+    onComment: (String) -> Unit,
+    onDownload: (List<ChapterItem>, MangaConstants.DownloadAction) -> Unit,
+    markPrevious: (ChapterItem, Boolean) -> Unit,
+    blockScanlator: (MangaConstants.BlockType, String) -> Unit,
 ) {
-    var dropdown by remember { mutableStateOf(false) }
-    var chapterDropdown by remember { mutableStateOf(false) }
-
-    val downloadState = remember(downloadStateProvider()) { downloadStateProvider() }
-    val downloadProgress = remember(downloadProgressProvider()) { downloadProgressProvider() }
-
-    val splitScanlator = remember {
-        ChapterUtil.getScanlators(scanlator)
-            .map {
-                SimpleDropDownItem.Action(
-                    text = UiText.String(it),
-                    onClick = { blockScanlator(it) },
-                )
-            }
-            .toImmutableList()
-    }
+    var isDropdownExpanded by remember { mutableStateOf(false) }
 
     val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
 
-    val lowContrast =
-        MaterialTheme.colorScheme.onSurface.copy(alpha = NekoColors.disabledAlphaLowContrast)
-    val (textColor, secondaryTextColor) =
-        when (read) {
-            true -> lowContrast to lowContrast
-            false ->
-                MaterialTheme.colorScheme.onSurface to
-                    MaterialTheme.colorScheme.onSurface.copy(
-                        alpha = NekoColors.mediumAlphaLowContrast
-                    )
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+
+    val textColor =
+        remember(chapterItem.chapter.read) {
+            if (chapterItem.chapter.read)
+                onSurfaceColor.copy(alpha = NekoColors.disabledAlphaLowContrast)
+            else onSurfaceColor
+        }
+    val secondaryTextColor =
+        remember(chapterItem.chapter.read) {
+            if (chapterItem.chapter.read)
+                onSurfaceColor.copy(alpha = NekoColors.disabledAlphaLowContrast)
+            else onSurfaceColor.copy(alpha = NekoColors.mediumAlphaLowContrast)
         }
 
-    val rowColor =
-        when (dropdown) {
-            true ->
-                themeColorState.rippleTheme
-                    .defaultColor()
-                    .copy(alpha = themeColorState.rippleTheme.rippleAlpha().focusedAlpha)
-            false -> MaterialTheme.colorScheme.surface
+    val dropdownItems =
+        remember(
+            chapterItem.chapter.isLocalSource(),
+            chapterItem.chapter.isMergedChapter(),
+            chapterItem.chapter.scanlator,
+            chapterItem.chapter.uploader,
+        ) {
+            buildChapterDropdownItems(
+                isLocal = chapterItem.chapter.isLocalSource(),
+                isMerged = chapterItem.chapter.isMergedChapter(),
+                scanlator = chapterItem.chapter.scanlator,
+                uploader = chapterItem.chapter.uploader,
+                onWebView = { onWebView(chapterItem) },
+                onComment = { onComment(chapterItem.chapter.mangaDexChapterId) },
+                markPrevious = { read -> markPrevious(chapterItem, read) },
+                blockScanlator = blockScanlator,
+            )
         }
 
     SimpleDropdownMenu(
-        expanded = dropdown,
+        expanded = isDropdownExpanded,
         themeColorState = themeColorState,
-        onDismiss = { dropdown = false },
-        dropDownItems =
-            getDropDownItems(
-                showScanlator = scanlator.isNotBlank() && !isMerged,
-                showComments = !isMerged,
-                scanlators = splitScanlator,
-                onWebView = onWebView,
-                onComment = onComment,
-                markPrevious = markPrevious,
-            ),
+        onDismiss = { isDropdownExpanded = false },
+        dropDownItems = dropdownItems,
     )
+
+    themeColorState.rippleConfiguration
 
     Row(
         modifier =
             Modifier.fillMaxWidth()
-                .background(color = rowColor)
+                .conditional(isDropdownExpanded) {
+                    background(themeColorState.rippleColor.copy(alpha = 0.2f))
+                }
                 .combinedClickable(
-                    onClick = onClick,
+                    onClick = { onClick(chapterItem) },
                     onLongClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        dropdown = !dropdown
+                        isDropdownExpanded = true
                     },
+                    role = Role.Button,
+                    onClickLabel = stringResource(id = R.string.start_reading),
                 )
                 .padding(start = Size.small, top = Size.small, bottom = Size.small),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
-            modifier = Modifier.align(Alignment.CenterVertically).fillMaxWidth(.8f),
-        ) {
-            val titleText =
-                when (shouldHideChapterTitles) {
-                    true ->
-                        stringResource(id = R.string.chapter_, decimalFormat.format(chapterNumber))
-                    false -> title
-                }
-
-            Row {
-                if (bookmark) {
-                    Icon(
-                        imageVector = Icons.Filled.Bookmark,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp).align(Alignment.CenterVertically),
-                        tint = themeColorState.buttonColor,
-                    )
-                    Gap(Size.tiny)
-                }
-                Text(
-                    text = titleText,
-                    style =
-                        MaterialTheme.typography.bodyLarge.copy(
-                            color = textColor,
-                            fontWeight = FontWeight.Medium,
-                            letterSpacing = (-.6).sp
-                        ),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            val statuses = mutableListOf<String>()
-
-            ChapterUtil.relativeDate(dateUploaded)?.let { statuses.add(it) }
-
-            val showPagesLeft = !read && lastPageRead > 0
-            val resources = LocalContext.current.resources
-
-            if (showPagesLeft && pagesLeft > 0) {
-                statuses.add(
-                    resources.getQuantityString(R.plurals.pages_left, pagesLeft, pagesLeft),
-                )
-            } else if (showPagesLeft) {
-                statuses.add(
-                    stringResource(id = R.string.page_, lastPageRead + 1),
-                )
-            }
-
-            if (scanlator.isNotBlank()) {
-                statuses.add(scanlator)
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (!language.isNullOrEmpty() && !language.equals("en", true)) {
-                    val iconRes = MdLang.fromIsoCode(language!!)?.iconResId
-
-                    when (iconRes == null) {
-                        true -> {
-                            TimberKt.e { "Missing flag for $language" }
-                            Text(
-                                text = "$language ? ",
-                                style =
-                                    MaterialTheme.typography.bodyMedium.copy(
-                                        color = secondaryTextColor,
-                                        fontWeight = FontWeight.Medium,
-                                        letterSpacing = (-.6).sp,
-                                    ),
-                            )
-                        }
-                        false -> {
-                            val painter =
-                                rememberDrawablePainter(
-                                    drawable =
-                                        AppCompatResources.getDrawable(
-                                            LocalContext.current,
-                                            iconRes
-                                        )
-                                )
-                            Image(
-                                painter = painter,
-                                modifier =
-                                    Modifier.height(16.dp).clip(RoundedCornerShape(Size.tiny)),
-                                contentDescription = "flag",
-                            )
-                            Gap(Size.tiny)
-                        }
-                    }
-                }
-                Text(
-                    text = statuses.joinToString(Constants.SEPARATOR),
-                    style =
-                        MaterialTheme.typography.bodyMedium.copy(
-                            color = secondaryTextColor,
-                            fontWeight = FontWeight.Medium,
-                            letterSpacing = (-.6).sp,
-                        ),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
-                statuses.joinToString(Constants.SEPARATOR)
-            }
-        }
-        Box(
-            modifier = Modifier.align(Alignment.CenterVertically),
-            contentAlignment = Alignment.Center
-        ) {
-            DownloadButton(
-                themeColorState.buttonColor,
-                downloadState,
-                downloadProgress,
-                Modifier.combinedClickable(
-                    onClick = {
-                        when (downloadState) {
-                            Download.State.NOT_DOWNLOADED -> onDownload(DownloadAction.Download)
-                            else -> chapterDropdown = true
-                        }
-                    },
-                    onLongClick = {},
-                ),
+        Column(modifier = Modifier.weight(1f)) {
+            ChapterTitle(
+                shouldHideChapterTitles = shouldHideChapterTitles,
+                title = chapterItem.chapter.name,
+                chapterNumber = chapterItem.chapter.chapterNumber.toDouble(),
+                isBookmarked = chapterItem.chapter.bookmark,
+                textColor = textColor,
+                themeColor = themeColorState.primaryColor,
             )
 
-            val scope = rememberCoroutineScope()
-            SimpleDropdownMenu(
-                expanded = chapterDropdown,
+            val subtitleText =
+                remember(
+                    chapterItem.chapter.dateUpload,
+                    chapterItem.chapter.read,
+                    chapterItem.chapter.lastPageRead,
+                    chapterItem.chapter.pagesLeft,
+                    chapterItem.chapter.scanlator,
+                    chapterItem.chapter.uploader,
+                    chapterItem.chapter.isMergedChapter(),
+                ) {
+                    val statuses = mutableListOf<String>()
+                    ChapterUtil.relativeDate(chapterItem.chapter.dateUpload)?.let {
+                        statuses.add(it)
+                    }
+                    if (!chapterItem.chapter.read && chapterItem.chapter.lastPageRead > 0) {
+                        if (chapterItem.chapter.pagesLeft > 0) {
+                            statuses.add(
+                                context.resources.getQuantityString(
+                                    R.plurals.pages_left,
+                                    chapterItem.chapter.pagesLeft,
+                                    chapterItem.chapter.pagesLeft,
+                                )
+                            )
+                        } else {
+                            statuses.add(
+                                context.getString(
+                                    R.string.page_,
+                                    chapterItem.chapter.lastPageRead + 1,
+                                )
+                            )
+                        }
+                    }
+                    if (chapterItem.chapter.scanlator.isNotBlank()) {
+                        if (chapterItem.chapter.scanlator == Constants.NO_GROUP)
+                            statuses.add(chapterItem.chapter.uploader)
+                        statuses.add(chapterItem.chapter.scanlator)
+                        if (
+                            chapterItem.chapter.isMergedChapter() &&
+                                chapterItem.chapter.uploader.isNotBlank()
+                        )
+                            statuses.add(chapterItem.chapter.uploader)
+                    }
+                    statuses.joinToString(Constants.SEPARATOR)
+                }
+
+            ChapterSubtitle(
+                subtitleText = subtitleText,
+                language = chapterItem.chapter.language,
+                textColor = secondaryTextColor,
+            )
+        }
+        ChapterDownloadIndicator(
+            isUnavailable = chapterItem.chapter.isUnavailable,
+            scanlator = chapterItem.chapter.scanlator,
+            downloadState = chapterItem.downloadState,
+            downloadProgress = chapterItem.downloadProgress,
+            onDownload = { action -> onDownload(listOf(chapterItem), action) },
+            themeColorState = themeColorState,
+        )
+    }
+}
+
+@Composable
+private fun ChapterTitle(
+    shouldHideChapterTitles: Boolean,
+    title: String,
+    chapterNumber: Double,
+    isBookmarked: Boolean,
+    textColor: Color,
+    themeColor: Color,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (isBookmarked) {
+            Icon(
+                imageVector = Icons.Filled.Bookmark,
+                contentDescription = null,
+                modifier = Modifier.size(Size.medium),
+                tint = themeColor,
+            )
+            Gap(Size.tiny)
+        }
+        Text(
+            text =
+                if (shouldHideChapterTitles)
+                    stringResource(id = R.string.chapter_, decimalFormat.format(chapterNumber))
+                else title,
+            style =
+                MaterialTheme.typography.bodyLarge.copy(
+                    color = textColor,
+                    fontWeight = FontWeight.Medium,
+                ),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ChapterSubtitle(subtitleText: String, language: String, textColor: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (language.isNotBlank()) {
+            LanguageIcon(language = language, textColor = textColor)
+        }
+        Text(
+            text = subtitleText,
+            style =
+                MaterialTheme.typography.bodyMedium.copy(
+                    color = textColor,
+                    fontWeight = FontWeight.Medium,
+                ),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun LanguageIcon(language: String, textColor: Color) {
+    if (language.equals(MdLang.ENGLISH.lang, true)) return
+
+    val mdLang = remember(language) { MdLang.fromIsoCode(language) }
+
+    if (mdLang?.iconResId != null) {
+        Image(
+            painter = painterResource(id = mdLang.iconResId),
+            modifier = Modifier.height(Size.medium).clip(RoundedCornerShape(Size.tiny)),
+            contentDescription = mdLang.prettyPrint,
+        )
+        Spacer(modifier = Modifier.size(Size.tiny))
+    } else {
+        Text(
+            text = "$language?",
+            style =
+                MaterialTheme.typography.bodyMedium.copy(
+                    color = textColor,
+                    fontWeight = FontWeight.Medium,
+                ),
+        )
+        Spacer(modifier = Modifier.size(Size.tiny))
+    }
+}
+
+@Composable
+private fun ChapterDownloadIndicator(
+    isUnavailable: Boolean,
+    scanlator: String,
+    downloadState: Download.State,
+    downloadProgress: Int,
+    onDownload: (MangaConstants.DownloadAction) -> Unit,
+    themeColorState: ThemeColorState,
+) {
+    val isLocked = isUnavailable || MdConstants.UnsupportedOfficialGroupList.contains(scanlator)
+    val isDownloaded = downloadState == Download.State.DOWNLOADED
+
+    when {
+        isLocked && !isDownloaded -> {
+            Icon(
+                imageVector = Icons.Outlined.Lock,
+                contentDescription = stringResource(id = R.string.unavailable),
+                modifier = Modifier.padding(Size.extraTiny).size(Size.extraLarge),
+                tint = themeColorState.primaryColor,
+            )
+        }
+        else -> {
+            DownloadButton(
                 themeColorState = themeColorState,
-                onDismiss = { chapterDropdown = false },
-                dropDownItems =
-                    when (downloadState) {
-                        Download.State.DOWNLOADED -> {
-                            persistentListOf(
-                                SimpleDropDownItem.Action(
-                                    text = UiText.StringResource(R.string.remove),
-                                    onClick = {
-                                        scope.launchDelayed { onDownload(DownloadAction.Remove) }
-                                    },
-                                ),
-                            )
-                        }
-                        else -> {
-                            persistentListOf(
-                                SimpleDropDownItem.Action(
-                                    text = UiText.StringResource(R.string.start_downloading_now),
-                                    onClick = {
-                                        scope.launchDelayed {
-                                            onDownload(DownloadAction.ImmediateDownload)
-                                        }
-                                    },
-                                ),
-                                SimpleDropDownItem.Action(
-                                    text = UiText.StringResource(R.string.cancel),
-                                    onClick = {
-                                        scope.launchDelayed { onDownload(DownloadAction.Cancel) }
-                                    },
-                                ),
-                            )
-                        }
-                    },
+                modifier = Modifier,
+                downloadState = downloadState,
+                downloadProgress = downloadProgress,
+                onClick = onDownload,
             )
         }
     }
 }
 
-@Composable
-private fun getDropDownItems(
-    showScanlator: Boolean,
-    showComments: Boolean,
-    scanlators: ImmutableList<SimpleDropDownItem>,
+private fun buildChapterDropdownItems(
+    isLocal: Boolean,
+    isMerged: Boolean,
+    scanlator: String,
+    uploader: String,
     onWebView: () -> Unit,
     onComment: () -> Unit,
     markPrevious: (Boolean) -> Unit,
-): ImmutableList<SimpleDropDownItem> {
-    return (listOf(
-            SimpleDropDownItem.Action(
-                text = UiText.StringResource(R.string.open_in_webview),
-                onClick = { onWebView() },
-            ),
+    blockScanlator: (MangaConstants.BlockType, String) -> Unit,
+): List<SimpleDropDownItem> {
+    return buildList {
+        if (!isLocal) {
+            add(
+                SimpleDropDownItem.Action(
+                    text = UiText.StringResource(R.string.open_in_webview),
+                    onClick = onWebView,
+                )
+            )
+        }
+
+        add(
             SimpleDropDownItem.Parent(
                 text = UiText.StringResource(R.string.mark_previous_as),
                 children =
@@ -504,33 +498,60 @@ private fun getDropDownItems(
                             onClick = { markPrevious(false) },
                         ),
                     ),
-            ),
-        ) +
-            if (showScanlator) {
-                listOf(
-                    SimpleDropDownItem.Parent(
-                        text = UiText.StringResource(R.string.block_scanlator),
-                        children = scanlators,
-                    ),
-                )
-            } else {
-                emptyList()
-            } +
-            if (showComments) {
-                listOf(
+            )
+        )
+
+        val scanlatorItems =
+            ChapterUtil.getScanlators(scanlator)
+                .mapNotNull { name ->
+                    if (name == Constants.NO_GROUP) uploader.takeIf { it.isNotBlank() } else name
+                }
+                .map { name ->
                     SimpleDropDownItem.Action(
-                        text = UiText.StringResource(R.string.comments),
-                        onClick = onComment,
-                    ),
+                        text = UiText.String(name),
+                        onClick = {
+                            val type =
+                                if (name == uploader) MangaConstants.BlockType.Uploader
+                                else MangaConstants.BlockType.Group
+                            blockScanlator(type, name)
+                        },
+                    )
+                }
+
+        if (scanlatorItems.isNotEmpty() && !isLocal) {
+            add(
+                SimpleDropDownItem.Parent(
+                    text = UiText.StringResource(R.string.block_scanlator),
+                    children = scanlatorItems,
                 )
-            } else {
-                emptyList()
-            })
-        .toPersistentList()
+            )
+        }
+
+        if (!isMerged && !isLocal) {
+            add(
+                SimpleDropDownItem.Action(
+                    text = UiText.StringResource(R.string.comments),
+                    onClick = onComment,
+                )
+            )
+        }
+    }
+        .toList()
 }
 
-val decimalFormat =
-    DecimalFormat(
-        "#.###",
-        DecimalFormatSymbols().apply { decimalSeparator = '.' },
-    )
+@Composable
+private fun SwipeIcon(icon: ImageVector, text: String, contentColor: Color) {
+    Box(Modifier.padding(horizontal = Size.medium)) {
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = contentColor)
+            Text(text = text, textAlign = TextAlign.Center, color = contentColor)
+        }
+    }
+}
+
+private val decimalFormat =
+    DecimalFormat("#.###", DecimalFormatSymbols().apply { decimalSeparator = '.' })

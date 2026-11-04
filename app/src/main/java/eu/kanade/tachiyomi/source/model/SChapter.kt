@@ -4,9 +4,8 @@ import eu.kanade.tachiyomi.data.database.models.ChapterImpl
 import eu.kanade.tachiyomi.data.database.models.MergeType
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.source.online.merged.mangalife.MangaLife
 import java.io.Serializable
-import tachiyomi.source.model.ChapterInfo
+import org.nekomanga.constants.Constants
 
 interface SChapter : Serializable {
 
@@ -26,7 +25,11 @@ interface SChapter : Serializable {
 
     var scanlator: String?
 
+    var uploader: String?
+
     var language: String?
+
+    var isUnavailable: Boolean
 
     // chapter id from mangadex
     var mangadex_chapter_id: String
@@ -46,6 +49,8 @@ interface SChapter : Serializable {
         date_upload = other.date_upload
         chapter_number = other.chapter_number
         scanlator = other.scanlator
+        uploader = other.uploader
+        isUnavailable = other.isUnavailable
         mangadex_chapter_id = other.mangadex_chapter_id
         language = other.language
     }
@@ -57,6 +62,7 @@ interface SChapter : Serializable {
             date_upload = this@SChapter.date_upload
             chapter_number = this@SChapter.chapter_number
             scanlator = this@SChapter.scanlator
+            uploader = this@SChapter.uploader
         }
     }
 
@@ -67,38 +73,18 @@ interface SChapter : Serializable {
     }
 }
 
-fun SChapter.isLegacyMergedChapter() = this.scanlator?.equals(MangaLife.oldName) == true
+fun SChapter.isLocalSource() =
+    this.scanlator?.equals(Constants.LOCAL_SOURCE) == true && this.isUnavailable
 
 fun SChapter.isMergedChapter() = MergeType.containsMergeSourceName(this.scanlator)
 
 fun SChapter.isMergedChapterOfType(mergeType: MergeType) =
-    MergeType.getMergeTypeName(mergeType) == this.scanlator
+    this.scanlator?.contains(MergeType.getMergeTypeName(mergeType)) == true
 
 fun SChapter.getHttpSource(sourceManager: SourceManager): HttpSource {
     val mergeType = MergeType.getMergeTypeFromName(this.scanlator)
     return when (mergeType == null) {
         true -> sourceManager.mangaDex
         false -> MergeType.getSource(mergeType, sourceManager)
-    }
-}
-
-fun SChapter.toChapterInfo(): ChapterInfo {
-    return ChapterInfo(
-        dateUpload = this.date_upload,
-        key = this.url,
-        name = this.name,
-        number = this.chapter_number,
-        scanlator = this.scanlator ?: "",
-    )
-}
-
-fun ChapterInfo.toSChapter(): SChapter {
-    val chapter = this
-    return SChapter.create().apply {
-        url = chapter.key
-        name = chapter.name
-        date_upload = chapter.dateUpload
-        chapter_number = chapter.number
-        scanlator = chapter.scanlator
     }
 }

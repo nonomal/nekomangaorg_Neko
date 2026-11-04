@@ -11,14 +11,16 @@ import tachiyomi.core.preference.Preference
 abstract class ViewerConfig(
     preferences: PreferencesHelper,
     readerPreferences: ReaderPreferences,
-    protected val scope: CoroutineScope
+    protected val scope: CoroutineScope,
 ) {
 
     var imagePropertyChangedListener: (() -> Unit)? = null
     var reloadChapterListener: ((Boolean) -> Unit)? = null
+    var reloadViewerListener: (() -> Unit)? = null
 
     var navigationModeChangedListener: (() -> Unit)? = null
     var navigationModeInvertedListener: (() -> Unit)? = null
+    var preloadPageAmountChangedListener: ((Int) -> Unit)? = null
 
     var longTapEnabled = true
     var tappingInverted = ViewerNavigation.TappingInvertMode.NONE
@@ -26,6 +28,7 @@ abstract class ViewerConfig(
     var volumeKeysEnabled = false
     var volumeKeysInverted = false
     var alwaysShowChapterTransition = true
+    var preloadPageAmount = readerPreferences.preloadPageAmount().get()
 
     var navigationOverlayForNewUser = false
     var navigationMode = 0
@@ -52,12 +55,16 @@ abstract class ViewerConfig(
         readerPreferences
             .alwaysShowChapterTransition()
             .register({ alwaysShowChapterTransition = it })
+
+        readerPreferences
+            .preloadPageAmount()
+            .register(
+                valueAssignment = { preloadPageAmount = it },
+                onChanged = { preloadPageAmountChangedListener?.invoke(it) },
+            )
     }
 
-    fun <T> Preference<T>.register(
-        valueAssignment: (T) -> Unit,
-        onChanged: (T) -> Unit = {},
-    ) {
+    fun <T> Preference<T>.register(valueAssignment: (T) -> Unit, onChanged: (T) -> Unit = {}) {
         changes()
             .onEach {
                 valueAssignment(it)

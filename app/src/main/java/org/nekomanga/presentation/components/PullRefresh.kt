@@ -1,47 +1,134 @@
 package org.nekomanga.presentation.components
 
+import android.os.Build
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.pullrefresh.PullRefreshIndicator
-import androidx.compose.material.pullrefresh.pullRefresh
-import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshState
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.delay
+import org.nekomanga.presentation.extensions.conditional
 import org.nekomanga.presentation.theme.Size
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PullRefresh(
-    refreshing: Boolean,
-    onRefresh: () -> Unit,
-    indicatorOffset: Dp = Size.none,
-    backgroundColor: Color = MaterialTheme.colorScheme.secondary,
-    contentColor: Color = MaterialTheme.colorScheme.onSecondary,
+    enabled: Boolean = true,
+    isRefreshing: Boolean,
+    onRefresh: (() -> Unit)?,
+    trackColor: Color = MaterialTheme.colorScheme.secondary,
+    blurBackground: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val state =
-        rememberPullRefreshState(
-            refreshing = refreshing,
+    val state = rememberPullToRefreshState()
+
+    if (enabled && onRefresh != null) {
+        PullToRefreshBox(
+            modifier =
+                Modifier.conditional(blurBackground) {
+                    this.blur(Size.medium).clickable(enabled = false) {}
+                },
+            isRefreshing = isRefreshing,
             onRefresh = onRefresh,
-            refreshingOffset = indicatorOffset,
+            state = state,
+            indicator = {
+                WavyLinearIndicator(
+                    state = state,
+                    isRefreshing = isRefreshing,
+                    color = trackColor,
+                    modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
+                )
+            },
+        ) {
+            content()
+        }
+    } else {
+        Box(
+            modifier =
+                Modifier.conditional(blurBackground) {
+                    this.blur(Size.medium).clickable(enabled = false) {}
+                }
+        ) {
+            content()
+        }
+    }
+    if (blurBackground && Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
+        Box(
+            modifier =
+                Modifier.fillMaxSize()
+                    .background(Color.Black.copy(alpha = NekoColors.mediumAlphaLowContrast))
+        )
+    }
+}
+
+@Composable
+private fun WavyLinearIndicator(
+    state: PullToRefreshState,
+    isRefreshing: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val targetProgress = state.distanceFraction.coerceIn(0f, 1f)
+
+    val animatedProgress by
+        animateFloatAsState(
+            targetValue = targetProgress,
+            animationSpec = tween(durationMillis = 150),
+            label = "WavyProgressAnimation",
         )
 
-    Box(Modifier.pullRefresh(state, !refreshing)) {
-        content()
+    var showIndeterminateIndicator by remember { mutableStateOf(isRefreshing) }
 
-        Box(
-            Modifier.padding().matchParentSize().clipToBounds(),
-        ) {
-            PullRefreshIndicator(
-                refreshing = refreshing,
-                state = state,
-                modifier = Modifier.align(Alignment.TopCenter),
-                backgroundColor = backgroundColor,
-                contentColor = contentColor,
+    LaunchedEffect(isRefreshing) {
+        if (isRefreshing) {
+            showIndeterminateIndicator = true
+        } else {
+            delay(1000)
+            showIndeterminateIndicator = false
+        }
+    }
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        val strokeWidth = with(LocalDensity.current) { Size.tiny.toPx() }
+        val stroke = remember(strokeWidth) { Stroke(width = strokeWidth, cap = StrokeCap.Round) }
+        if (showIndeterminateIndicator) {
+            LinearWavyProgressIndicator(
+                modifier = Modifier.fillMaxWidth().align(Alignment.CenterStart),
+                color = color,
+                trackColor = color.copy(alpha = 0.24f),
+                stroke = stroke,
+                trackStroke = stroke,
+            )
+        } else if (animatedProgress > 0f) {
+            LinearWavyProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier.fillMaxWidth().align(Alignment.CenterStart),
+                color = color,
+                trackColor = color.copy(alpha = 0.24f),
+                stroke = stroke,
+                trackStroke = stroke,
             )
         }
     }

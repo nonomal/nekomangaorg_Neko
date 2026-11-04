@@ -1,0 +1,1185 @@
+package org.nekomanga.presentation.screens.feed
+
+import android.app.Application
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.github.michaelbull.result.map
+import com.github.michaelbull.result.onOk
+import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.ui.manga.MangaConstants
+import eu.kanade.tachiyomi.util.system.launchIO
+import eu.kanade.tachiyomi.util.system.launchNonCancellable
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.nekomanga.core.preferences.observeAndUpdate
+import org.nekomanga.core.preferences.toggle
+import org.nekomanga.core.security.SecurityPreferences
+import org.nekomanga.data.repository.FeedRepository
+import org.nekomanga.domain.chapter.ChapterItem
+import org.nekomanga.domain.chapter.ChapterMarkActions
+import org.nekomanga.domain.chapter.SimpleChapter
+import org.nekomanga.domain.details.MangaDetailsPreferences
+import org.nekomanga.domain.download.DownloadItem
+import org.nekomanga.domain.feed.FeedHistoryGroup
+import org.nekomanga.domain.library.LibraryPreferences
+import org.nekomanga.logging.TimberKt
+import org.nekomanga.util.paging.DefaultPaginator
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+
+class FeedViewModel() : ViewModel() {
+    val preferences: PreferencesHelper = Injekt.get()
+    val libraryPreferences: LibraryPreferences = Injekt.get()
+    val securityPreferences: SecurityPreferences = Injekt.get()
+    val mangaDetailsPreferences: MangaDetailsPreferences = Injekt.get()
+    private val feedRepository: FeedRepository = Injekt.get()
+    private val downloadManager: DownloadManager = Injekt.get()
+    private val application: Application = Injekt.get()
+    private val _feedScreenState =
+        MutableStateFlow(
+            FeedScreenState(
+                feedScreenType = preferences.feedViewType().get(),
+                outlineCovers = libraryPreferences.outlineOnCovers().get(),
+                dynamicCovers = mangaDetailsPreferences.dynamicCovers().get(),
+                outlineCards = preferences.feedViewOutlineCards().get(),
+                incognitoMode = securityPreferences.incognitoMode().get(),
+                groupUpdateChapters = preferences.groupChaptersUpdates().get(),
+                downloadOnlyOnUnmetered = preferences.downloadOnlyOverUnmetered().get(),
+                swipeRefreshEnabled = preferences.swipeRefreshFeedScreen().get(),
+            )
+        )
+
+    private val _historyScreenPagingState =
+        MutableStateFlow(
+            HistoryScreenPagingState(historyGrouping = preferences.historyChapterGrouping().get())
+        )
+
+    private val _updatesScreenPagingState = MutableStateFlow(UpdatesScreenPagingState())
+
+    private val _summaryScreenPagingState = MutableStateFlow(SummaryScreenPagingState())
+
+    val feedScreenState: StateFlow<FeedScreenState> = _feedScreenState.asStateFlow()
+
+    val updatesScreenPagingState: StateFlow<UpdatesScreenPagingState> =
+        _updatesScreenPagingState.asStateFlow()
+
+    val historyScreenPagingState: StateFlow<HistoryScreenPagingState> =
+        _historyScreenPagingState.asStateFlow()
+
+    val summaryScreenPagingState: StateFlow<SummaryScreenPagingState> =
+        _summaryScreenPagingState.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    private val updatesPaginator =
+        DefaultPaginator(
+            initialKey = _updatesScreenPagingState.value.offset,
+            onLoadUpdated = {
+                _updatesScreenPagingState.update { state -> state.copy(pageLoading = it) }
+            },
+            onRequest = {
+                feedRepository
+                    .getUpdatesPage(
+                        offset = _updatesScreenPagingState.value.offset,
+                        limit = UPDATES_ENDLESS_LIMIT,
+                        uploadsFetchSort = _updatesScreenPagingState.value.updatesSortedByFetch,
+                    )
+                    .map { page -> Pair(page.hasNextPage, page.items.toFeedMangaList()) }
+            },
+            getNextKey = { _updatesScreenPagingState.value.offset + UPDATES_ENDLESS_LIMIT },
+            onError = {
+                _updatesScreenPagingState.update { state -> state.copy(pageLoading = false) }
+            },
+            onSuccess = { hasNextPage, items, newKey ->
+                _updatesScreenPagingState.update { state ->
+                    state.copy(
+                        offset = newKey,
+                        pageLoading = false,
+                        hasMoreResults = hasNextPage,
+                        // empty the list before adding the first page in case it was loaded from
+                        // cache
+                        updatesFeedMangaList =
+                            if (state.offset == 0) {
+                                items.toList()
+                            } else {
+                                (state.updatesFeedMangaList + items).toList()
+                            },
+                    )
+                }
+            },
+        )
+
+    private val historyPaginator =
+        DefaultPaginator(
+            initialKey = _historyScreenPagingState.value.offset,
+            onLoadUpdated = {
+                _historyScreenPagingState.update { state -> state.copy(pageLoading = it) }
+            },
+            onRequest = {
+                val seenIds =
+                    if (
+                        _historyScreenPagingState.value.historyGrouping == FeedHistoryGroup.Series
+                    ) {
+                        _historyScreenPagingState.value.historyFeedMangaList
+                            .map { it.mangaId }
+                            .toSet()
+                    } else {
+                        emptySet()
+                    }
+                feedRepository
+                    .getHistoryPage(
+                        offset = _historyScreenPagingState.value.offset,
+                        limit = HISTORY_ENDLESS_LIMIT,
+                        group = _historyScreenPagingState.value.historyGrouping,
+                        seenMangaIds = seenIds,
+                    )
+                    .map { page -> Pair(page.hasNextPage, page.items.toFeedMangaList()) }
+            },
+            getNextKey = { _historyScreenPagingState.value.offset + HISTORY_ENDLESS_LIMIT },
+            onError = {
+                _historyScreenPagingState.update { state -> state.copy(pageLoading = false) }
+            },
+            onSuccess = { hasNextPage, items, newKey ->
+                _historyScreenPagingState.update { state ->
+                    state.copy(
+                        offset = newKey,
+                        pageLoading = false,
+                        hasMoreResults = hasNextPage,
+                        // empty the list before adding the first page in case it was loaded from
+                        // cache
+                        historyFeedMangaList =
+                            if (state.offset == 0) {
+                                items.toList()
+                            } else {
+                                (state.historyFeedMangaList + items).toList()
+                            },
+                    )
+                }
+            },
+        )
+
+    override fun onCleared() {
+        saveItems()
+    }
+
+    fun saveItems() {
+        lastUpdatesFeedMangaList = _updatesScreenPagingState.value.updatesFeedMangaList
+        lastHistoryFeedMangaList = _historyScreenPagingState.value.historyFeedMangaList
+        lastSummaryUpdatesFeedMangaList = _summaryScreenPagingState.value.updatesFeedMangaList
+        lastContinueReadingList = _summaryScreenPagingState.value.continueReadingList
+        lastSummaryNewlyAddedFeedMangaList = _summaryScreenPagingState.value.newlyAddedFeedMangaList
+    }
+
+    init {
+
+        populateItems()
+        observeDownloads()
+
+        LibraryUpdateJob.updateFlow.onEach(::onUpdateManga).launchIn(viewModelScope)
+        viewModelScope.launchIO {
+            val downloads =
+                downloadManager.queueState.value
+                    .map { download ->
+                        DownloadItem(
+                            mangaItem = download.mangaItem,
+                            chapterItem =
+                                download.chapterItem.toChapterItem(
+                                    download.status,
+                                    download.progress,
+                                ),
+                        )
+                    }
+                    .toList()
+
+            _feedScreenState.update { it.copy(downloads = downloads) }
+        }
+
+        if (_feedScreenState.value.firstLoad) {
+            _feedScreenState.update { state -> state.copy(firstLoad = false) }
+            viewModelScope.launchIO { loadNextPage() }
+        }
+
+        preferences.useVividColorHeaders().changes().observeAndUpdate(viewModelScope) { enabled ->
+            _feedScreenState.update { it.copy(useVividColorHeaders = enabled) }
+        }
+
+        securityPreferences.incognitoMode().changes().observeAndUpdate(viewModelScope) { incognito
+            ->
+            _feedScreenState.update { state -> state.copy(incognitoMode = incognito) }
+        }
+
+        preferences.downloadOnlyOverUnmetered().changes().observeAndUpdate(viewModelScope) {
+            _feedScreenState.update { state -> state.copy(downloadOnlyOnUnmetered = it) }
+        }
+
+        preferences.feedViewOutlineCards().changes().observeAndUpdate(viewModelScope) {
+            _feedScreenState.update { state -> state.copy(outlineCards = it) }
+        }
+
+        libraryPreferences.outlineOnCovers().changes().observeAndUpdate(viewModelScope) {
+            _feedScreenState.update { state -> state.copy(outlineCovers = it) }
+        }
+
+        preferences.groupChaptersUpdates().changes().observeAndUpdate(viewModelScope) {
+            _feedScreenState.update { state -> state.copy(groupUpdateChapters = it) }
+        }
+
+        preferences.historyChapterGrouping().changes().observeAndUpdate(viewModelScope) {
+            _historyScreenPagingState.update { state ->
+                state.copy(
+                    historyGrouping = it,
+                    offset = 0,
+                    historyFeedMangaList = listOf(),
+                )
+            }
+            historyPaginator.reset()
+            loadNextPage()
+        }
+
+        preferences.feedViewType().changes().observeAndUpdate(viewModelScope) { type ->
+            when (type) {
+                FeedScreenType.Summary -> Unit
+                FeedScreenType.History -> {
+                    _historyScreenPagingState.update { state ->
+                        state.copy(
+                            offset = 0,
+                            searchHistoryFeedMangaList = listOf(),
+                            searchQuery = "",
+                        )
+                    }
+                    historyPaginator.reset()
+                }
+                FeedScreenType.Updates -> {
+                    _updatesScreenPagingState.update { state ->
+                        state.copy(
+                            offset = 0,
+                            searchUpdatesFeedMangaList = listOf(),
+                            searchQuery = "",
+                        )
+                    }
+                    updatesPaginator.reset()
+                    loadNextPage()
+                }
+            }
+
+            _feedScreenState.update { state -> state.copy(feedScreenType = type) }
+            loadNextPage()
+        }
+
+        preferences.swipeRefreshFeedScreen().changes().observeAndUpdate(viewModelScope) {
+            _feedScreenState.update { state -> state.copy(swipeRefreshEnabled = it) }
+        }
+
+        preferences.sortFetchedTime().changes().observeAndUpdate(viewModelScope) {
+            _updatesScreenPagingState.update { state ->
+                state.copy(
+                    updatesSortedByFetch = it,
+                    offset = 0,
+                    updatesFeedMangaList = listOf(),
+                    searchQuery = "",
+                    searchUpdatesFeedMangaList = listOf(),
+                )
+            }
+            updatesPaginator.reset()
+            loadNextPage()
+        }
+    }
+
+    fun loadNextPage() {
+        viewModelScope.launchIO {
+            when (_feedScreenState.value.feedScreenType) {
+                FeedScreenType.Summary -> loadSummaryPage()
+                FeedScreenType.History -> historyPaginator.loadNextItems()
+                FeedScreenType.Updates -> updatesPaginator.loadNextItems()
+            }
+        }
+    }
+
+    fun switchViewType(feedScreenType: FeedScreenType) {
+        viewModelScope.launchIO { preferences.feedViewType().set(feedScreenType) }
+    }
+
+    fun toggleSwipeRefresh() {
+        viewModelScope.launchIO { preferences.swipeRefreshFeedScreen().toggle() }
+    }
+
+    fun toggleChapterRead(chapterItem: ChapterItem) {
+        viewModelScope.launchIO {
+            val updatedChapterItem = feedRepository.toggleChapterRead(chapterItem)
+            updateReadOnFeed(updatedChapterItem)
+            if (updatedChapterItem.chapter.read) {
+                if (
+                    preferences.removeAfterMarkedAsRead().get() &&
+                        updatedChapterItem.chapter.canDeleteChapter()
+                ) {
+                    feedRepository.deleteChapter(updatedChapterItem)
+                }
+            }
+        }
+    }
+
+    fun togglerGroupUpdateChapters() {
+        viewModelScope.launchIO { preferences.groupChaptersUpdates().toggle() }
+    }
+
+    fun toggleGroupHistoryType(historyGrouping: FeedHistoryGroup) {
+        viewModelScope.launchIO { preferences.historyChapterGrouping().set(historyGrouping) }
+    }
+
+    fun toggleOutlineCards() {
+        viewModelScope.launchIO { preferences.feedViewOutlineCards().toggle() }
+    }
+
+    fun toggleOutlineCovers() {
+        viewModelScope.launchIO { libraryPreferences.outlineOnCovers().toggle() }
+    }
+
+    fun toggleShowingDownloads() {
+        viewModelScope.launchIO {
+            _feedScreenState.update { it.copy(showingDownloads = !it.showingDownloads) }
+        }
+    }
+
+    fun toggleDownloader() {
+        viewModelScope.launch {
+            when (downloadManager.isRunning) {
+                true -> downloadManager.pauseDownloads()
+                false -> downloadManager.startDownloads()
+            }
+        }
+    }
+
+    fun clearDownloadQueue() {
+        viewModelScope.launch { downloadManager.clearQueue() }
+    }
+
+    fun toggleLibraryUpdate(start: Boolean) {
+        viewModelScope.launchNonCancellable {
+            try {
+                if (start) {
+                    LibraryUpdateJob.startNow(application)
+                } else {
+                    LibraryUpdateJob.stop(application)
+                }
+            } catch (e: Exception) {
+                TimberKt.e(e) { "Failed to toggle library update" }
+            }
+        }
+    }
+
+    fun toggleUploadsSortOrder() {
+        viewModelScope.launchIO { preferences.sortFetchedTime().toggle() }
+    }
+
+    fun deleteAllHistoryForAllManga() {
+        viewModelScope.launchIO {
+            _historyScreenPagingState.update {
+                it.copy(
+                    offset = 0,
+                    historyFeedMangaList = listOf(),
+                    searchHistoryFeedMangaList = listOf(),
+                    searchQuery = "",
+                )
+            }
+            feedRepository.deleteAllHistory()
+            historyPaginator.reset()
+            historyPaginator.loadNextItems()
+            loadSummaryPage()
+        }
+    }
+
+    fun deleteAllHistory(feedManga: FeedManga) {
+        viewModelScope.launchIO {
+            feedRepository.deleteAllHistoryForManga(feedManga.mangaId)
+            _historyScreenPagingState.update {
+                it.copy(
+                    historyFeedMangaList =
+                        it.historyFeedMangaList
+                            .filter { fm -> fm.mangaId != feedManga.mangaId }
+                            .toList()
+                )
+            }
+            loadSummaryPage()
+        }
+    }
+
+    fun deleteHistory(feedManga: FeedManga, simpleChapter: SimpleChapter) {
+        viewModelScope.launchIO {
+            feedRepository.markChapter(simpleChapter.toChapterItem(), ChapterMarkActions.Unread())
+
+            feedRepository.deleteHistoryForChapter(simpleChapter.url)
+            val index =
+                _historyScreenPagingState.value.historyFeedMangaList.indexOfFirst {
+                    it.mangaId == feedManga.mangaId
+                }
+            val mutableFeedManga =
+                _historyScreenPagingState.value.historyFeedMangaList.toMutableList()
+
+            _summaryScreenPagingState.update { state ->
+                state.copy(
+                    continueReadingList =
+                        state.continueReadingList
+                            .filter { fm -> fm.mangaId != feedManga.mangaId }
+                            .toList()
+                )
+            }
+
+            if (index >= 0) {
+                if (feedManga.chapters.size == 1) {
+                    mutableFeedManga.removeAt(index)
+                } else if (
+                    _historyScreenPagingState.value.historyGrouping == FeedHistoryGroup.Series
+                ) {
+                    val newFeedManga =
+                        feedRepository
+                            .getUpdatedFeedItemForHistoryBySeries(feedManga.toFeedItem())
+                            .toFeedManga()
+                    mutableFeedManga[index] = newFeedManga
+                } else {
+                    val newFeedManga = _historyScreenPagingState.value.historyFeedMangaList[index]
+                    mutableFeedManga[index] =
+                        newFeedManga.copy(
+                            chapters =
+                                newFeedManga.chapters
+                                    .filter { it.chapter.url != simpleChapter.url }
+                                    .toList()
+                        )
+                }
+                _historyScreenPagingState.update {
+                    it.copy(historyFeedMangaList = mutableFeedManga.toList())
+                }
+            }
+
+            loadSummaryPage()
+        }
+    }
+
+    fun loadSummaryPage() {
+        viewModelScope.launchIO {
+            feedRepository.getSummaryUpdatesList().onOk { list ->
+                _summaryScreenPagingState.update { state ->
+                    state.copy(
+                        updatesFeedMangaList = list.toFeedMangaList(),
+                        updatingUpdates = false,
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            feedRepository.getSummaryContinueReadingList().onOk { list ->
+                _summaryScreenPagingState.update { state ->
+                    state.copy(
+                        continueReadingList = list.toFeedMangaList(),
+                        updatingContinueReading = false,
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            feedRepository.getSummaryNewlyAddedList().onOk { list ->
+                _summaryScreenPagingState.update { state ->
+                    state.copy(
+                        newlyAddedFeedMangaList = list.toFeedMangaList(),
+                        updatingNewlyAdded = false,
+                    )
+                }
+            }
+        }
+    }
+
+    fun search(searchQuery: String?) {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launchIO {
+            if (searchQuery.isNullOrBlank()) {
+                when (_feedScreenState.value.feedScreenType) {
+                    FeedScreenType.Summary -> Unit
+                    FeedScreenType.History ->
+                        _historyScreenPagingState.update {
+                            it.copy(
+                                searchHistoryFeedMangaList = listOf(),
+                                searchQuery = "",
+                            )
+                        }
+                    FeedScreenType.Updates ->
+                        _updatesScreenPagingState.update {
+                            it.copy(
+                                searchUpdatesFeedMangaList = listOf(),
+                                searchQuery = "",
+                            )
+                        }
+                }
+            } else {
+                when (_feedScreenState.value.feedScreenType) {
+                    FeedScreenType.Summary -> Unit
+                    FeedScreenType.History -> {
+                        feedRepository
+                            .getHistoryPage(
+                                searchQuery,
+                                offset = 0,
+                                limit = 100,
+                                _historyScreenPagingState.value.historyGrouping,
+                            )
+                            .onOk { page ->
+                                _historyScreenPagingState.update {
+                                    it.copy(
+                                        searchQuery = searchQuery,
+                                        searchHistoryFeedMangaList = page.items.toFeedMangaList(),
+                                    )
+                                }
+                            }
+                    }
+                    FeedScreenType.Updates -> {
+                        feedRepository
+                            .getUpdatesPage(
+                                searchQuery,
+                                offset = 0,
+                                limit = 100,
+                                _updatesScreenPagingState.value.updatesSortedByFetch,
+                            )
+                            .onOk { page ->
+                                _updatesScreenPagingState.update {
+                                    it.copy(
+                                        searchQuery = searchQuery,
+                                        searchUpdatesFeedMangaList = page.items.toFeedMangaList(),
+                                    )
+                                }
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    fun downloadChapter(
+        chapterItem: ChapterItem,
+        feedManga: FeedManga,
+        downloadAction: MangaConstants.DownloadAction,
+    ) {
+        viewModelScope.launchIO {
+            feedRepository.downloadChapter(feedManga.toFeedItem(), chapterItem, downloadAction)
+            if (
+                downloadAction == MangaConstants.DownloadAction.Cancel ||
+                    downloadAction == MangaConstants.DownloadAction.Remove
+            ) {
+                updateDownloadOnFeed(chapterItem.chapter.id, feedManga.mangaId, null)
+            }
+        }
+    }
+
+    fun removeDownload(download: DownloadItem) {
+        viewModelScope.launchIO { downloadManager.deletePendingDownloadsItems(listOf(download)) }
+    }
+
+    fun moveDownload(downloadItem: DownloadItem, direction: MoveDownloadDirection) {
+        viewModelScope.launchIO {
+            downloadManager.reorderQueue { queue ->
+                queue.withChapterMoved(downloadItem.chapterItem.chapter.id, direction)
+            }
+        }
+    }
+
+    fun moveDownloadSeries(downloadItem: DownloadItem, direction: MoveDownloadDirection) {
+        viewModelScope.launchIO {
+            downloadManager.reorderQueue { queue ->
+                queue.withSeriesMoved(downloadItem.mangaItem.id, direction)
+            }
+        }
+    }
+
+    fun cancelDownloadSeries(downloadItem: DownloadItem) {
+        viewModelScope.launchIO {
+            val downloadsToDelete =
+                downloadManager.queueState.value.filter { download ->
+                    download.mangaItem.id == downloadItem.mangaItem.id
+                }
+            downloadManager.deletePendingDownloads(downloadsToDelete)
+        }
+    }
+
+    fun cancelDownloadSource(sourceName: String) {
+        viewModelScope.launchIO {
+            val downloadsToDelete =
+                downloadManager.queueState.value.filter { download ->
+                    download.source.name == sourceName
+                }
+            downloadManager.deletePendingDownloads(downloadsToDelete)
+        }
+    }
+
+    fun toggleDownloadOnUnmetered() {
+        viewModelScope.launchIO { preferences.downloadOnlyOverUnmetered().toggle() }
+    }
+
+    /**
+     * Finds the manga in the given list, finds the matching chapters and updates the chapter and
+     * the list. Returning the updated list or false if the chapter didnt exist
+     */
+    /**
+     * Finds the manga in the given list, finds the matching chapter, and updates its download
+     * status. Returns a Pair containing a success flag and the updated list.
+     */
+    private fun updateChapterDownloadForManga(
+        chapterId: Long,
+        mangaId: Long,
+        download: Download?,
+        feedManga: List<FeedManga>,
+    ): Pair<Boolean, List<FeedManga>> {
+        val mangaIndex = feedManga.indexOfFirst { it.mangaId == mangaId }
+
+        if (mangaIndex == -1) {
+            return false to feedManga
+        }
+
+        val mangaToUpdate = feedManga[mangaIndex]
+
+        val chapterIndex = mangaToUpdate.chapters.indexOfFirst { it.chapter.id == chapterId }
+
+        if (chapterIndex == -1) {
+            return false to feedManga
+        }
+
+        val updatedChapters =
+            mangaToUpdate.chapters.mapIndexed { index, feedItem ->
+                if (index == chapterIndex) {
+                    feedItem.copy(
+                        downloadState = download?.status ?: Download.State.NOT_DOWNLOADED,
+                        downloadProgress = download?.progress ?: 0,
+                    )
+                } else {
+                    feedItem
+                }
+            }
+
+        val updatedFeedManga =
+            feedManga.toMutableList().apply {
+                this[mangaIndex] = mangaToUpdate.copy(chapters = updatedChapters.toList())
+            }
+
+        return true to updatedFeedManga
+    }
+
+    private fun updateChapterReadStatus(
+        updatedChapterItem: ChapterItem,
+        feedManga: List<FeedManga>,
+    ): Pair<Boolean, List<FeedManga>> {
+        var wasUpdated: Boolean = false
+        val updatedFeedManga = feedManga.mapIndexed { index, manga ->
+            if (
+                manga.mangaId == updatedChapterItem.chapter.mangaId &&
+                    manga.chapters.firstOrNull()?.chapter?.id == updatedChapterItem.chapter.id
+            ) {
+                wasUpdated = true
+                manga.copy(chapters = listOf(updatedChapterItem))
+            } else {
+                manga
+            }
+        }
+        return wasUpdated to updatedFeedManga
+    }
+
+    private fun onUpdateManga(mangaId: Long?) {
+        viewModelScope.launchIO {
+            when (mangaId) {
+                null -> {
+                    _feedScreenState.update { it.copy(isRefreshing = false) }
+                }
+                LibraryUpdateJob.STARTING_UPDATE_SOURCE -> {
+                    _feedScreenState.update { it.copy(isRefreshing = true) }
+                }
+                else -> {
+                    updatesPaginator.reset()
+                    updatesPaginator.loadNextItems()
+                }
+            }
+        }
+    }
+
+    private fun refreshUpdatesFeed() {
+        viewModelScope.launchIO {
+            if (
+                _updatesScreenPagingState.value.updatesFeedMangaList.isEmpty() &&
+                    _feedScreenState.value.firstLoad
+            )
+                return@launchIO
+
+            val currentOffset = _updatesScreenPagingState.value.offset
+            var mutableFeedManga = mutableListOf<FeedManga>()
+            val limit = UPDATES_ENDLESS_LIMIT
+            for (i in 0..currentOffset step limit) {
+                feedRepository
+                    .getUpdatesPage(
+                        offset = i,
+                        limit = limit,
+                        uploadsFetchSort = _updatesScreenPagingState.value.updatesSortedByFetch,
+                    )
+                    .onOk { page ->
+                        mutableFeedManga =
+                            (mutableFeedManga + page.items.toFeedMangaList()).toMutableList()
+                    }
+            }
+            _updatesScreenPagingState.update { state ->
+                state.copy(updatesFeedMangaList = mutableFeedManga.toList())
+            }
+        }
+    }
+
+    private fun refreshHistoryFeed() {
+        viewModelScope.launchIO {
+            if (
+                _historyScreenPagingState.value.historyFeedMangaList.isEmpty() &&
+                    _feedScreenState.value.firstLoad
+            )
+                return@launchIO
+
+            val currentOffset = _historyScreenPagingState.value.offset
+            var mutableFeedManga = mutableListOf<FeedManga>()
+            val limit = HISTORY_ENDLESS_LIMIT
+            for (i in 0..currentOffset step limit) {
+                val seenIds =
+                    if (
+                        _historyScreenPagingState.value.historyGrouping == FeedHistoryGroup.Series
+                    ) {
+                        mutableFeedManga.map { it.mangaId }.toSet()
+                    } else {
+                        emptySet()
+                    }
+                feedRepository
+                    .getHistoryPage(
+                        offset = i,
+                        limit = limit,
+                        group = _historyScreenPagingState.value.historyGrouping,
+                        seenMangaIds = seenIds,
+                    )
+                    .onOk { page ->
+                        mutableFeedManga =
+                            (mutableFeedManga + page.items.toFeedMangaList()).toMutableList()
+                    }
+            }
+            _historyScreenPagingState.update { state ->
+                state.copy(historyFeedMangaList = mutableFeedManga.toList())
+            }
+        }
+    }
+
+    fun updateMangaForChanges() {
+        if (!_feedScreenState.value.firstLoad) {
+            viewModelScope.launchIO {
+                delay(500L)
+                if (_updatesScreenPagingState.value.searchUpdatesFeedMangaList.isNotEmpty()) {
+                    launch {
+                        getUpdatedSearchFeedMangaList(FeedScreenType.Updates) { feedMangaList ->
+                            _updatesScreenPagingState.update { state ->
+                                state.copy(searchUpdatesFeedMangaList = feedMangaList)
+                            }
+                        }
+                    }
+                }
+                if (_historyScreenPagingState.value.searchHistoryFeedMangaList.isNotEmpty()) {
+                    launch {
+                        getUpdatedSearchFeedMangaList(FeedScreenType.History) { feedMangaList ->
+                            _historyScreenPagingState.update { state ->
+                                state.copy(searchHistoryFeedMangaList = feedMangaList)
+                            }
+                        }
+                    }
+                }
+                when (feedScreenState.value.feedScreenType) {
+                    FeedScreenType.Summary -> loadSummaryPage()
+                    FeedScreenType.History -> refreshHistoryFeed()
+                    FeedScreenType.Updates -> refreshUpdatesFeed()
+                }
+            }
+        }
+    }
+
+    private suspend fun getUpdatedSearchFeedMangaList(
+        feedScreenType: FeedScreenType,
+        update: (List<FeedManga>) -> Unit,
+    ) {
+        if (feedScreenType == FeedScreenType.Updates) {
+                feedRepository.getUpdatesPage(
+                    searchQuery = _updatesScreenPagingState.value.searchQuery,
+                    offset = 0,
+                    limit = 100,
+                    uploadsFetchSort = _updatesScreenPagingState.value.updatesSortedByFetch,
+                )
+            } else {
+                feedRepository.getHistoryPage(
+                    searchQuery = _historyScreenPagingState.value.searchQuery,
+                    offset = 0,
+                    group = _historyScreenPagingState.value.historyGrouping,
+                )
+            }
+            .onOk { page -> update(page.items.toFeedMangaList()) }
+    }
+
+    private fun updateReadOnFeed(chapterItem: ChapterItem) {
+
+        viewModelScope.launchIO {
+            val (searchHistoryUpdated, searchHistoryFeedMangaList) =
+                updateChapterReadStatus(
+                    chapterItem,
+                    _historyScreenPagingState.value.searchHistoryFeedMangaList,
+                )
+            if (searchHistoryUpdated) {
+                _historyScreenPagingState.update {
+                    it.copy(searchHistoryFeedMangaList = searchHistoryFeedMangaList.toList())
+                }
+            }
+        }
+        viewModelScope.launchIO {
+            val (searchUpdatesUpdated, searchUpdatesFeedMangaList) =
+                updateChapterReadStatus(
+                    chapterItem,
+                    _updatesScreenPagingState.value.searchUpdatesFeedMangaList,
+                )
+            if (searchUpdatesUpdated) {
+                _updatesScreenPagingState.update {
+                    it.copy(searchUpdatesFeedMangaList = searchUpdatesFeedMangaList.toList())
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            val (historyFeedUpdated, historyFeedMangaList) =
+                updateChapterReadStatus(
+                    chapterItem,
+                    _historyScreenPagingState.value.historyFeedMangaList,
+                )
+            if (historyFeedUpdated) {
+                _historyScreenPagingState.update {
+                    it.copy(historyFeedMangaList = historyFeedMangaList.toList())
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            val (updatesFeedUpdated, updatesFeedMangaList) =
+                updateChapterReadStatus(
+                    chapterItem,
+                    _updatesScreenPagingState.value.updatesFeedMangaList,
+                )
+            if (updatesFeedUpdated) {
+                _updatesScreenPagingState.update {
+                    it.copy(updatesFeedMangaList = updatesFeedMangaList.toList())
+                }
+            }
+        }
+        viewModelScope.launchIO {
+            val (updatesFeedUpdated, updatesFeedMangaList) =
+                updateChapterReadStatus(
+                    chapterItem,
+                    _summaryScreenPagingState.value.updatesFeedMangaList,
+                )
+            if (updatesFeedUpdated) {
+                _summaryScreenPagingState.update {
+                    it.copy(updatesFeedMangaList = updatesFeedMangaList.toList())
+                }
+            }
+            val (newlyAddedFeedUpdated, newlyAddedFeedMangaList) =
+                updateChapterReadStatus(
+                    chapterItem,
+                    _summaryScreenPagingState.value.newlyAddedFeedMangaList,
+                )
+            if (newlyAddedFeedUpdated) {
+                _summaryScreenPagingState.update {
+                    it.copy(newlyAddedFeedMangaList = newlyAddedFeedMangaList.toList())
+                }
+            }
+
+            val (continueReadingFeedUpdated, continueReadingList) =
+                updateChapterReadStatus(
+                    chapterItem,
+                    _summaryScreenPagingState.value.continueReadingList,
+                )
+            if (continueReadingFeedUpdated) {
+                _summaryScreenPagingState.update {
+                    it.copy(continueReadingList = continueReadingList.toList())
+                }
+            }
+
+            if (updatesFeedUpdated || newlyAddedFeedUpdated || continueReadingFeedUpdated) {
+                loadSummaryPage()
+            }
+        }
+    }
+
+    private fun updateDownloadOnFeed(chapterId: Long, mangaId: Long, download: Download?) {
+
+        viewModelScope.launchIO {
+            val (searchHistoryFeedUpdated, searchHistoryFeedMangaList) =
+                updateChapterDownloadForManga(
+                    chapterId,
+                    mangaId,
+                    download,
+                    _historyScreenPagingState.value.searchHistoryFeedMangaList,
+                )
+            if (searchHistoryFeedUpdated) {
+                _historyScreenPagingState.update {
+                    it.copy(searchHistoryFeedMangaList = searchHistoryFeedMangaList.toList())
+                }
+            }
+        }
+        viewModelScope.launchIO {
+            val (searchUpdatesFeedUpdated, searchUpdatesFeedMangaList) =
+                updateChapterDownloadForManga(
+                    chapterId,
+                    mangaId,
+                    download,
+                    _updatesScreenPagingState.value.searchUpdatesFeedMangaList,
+                )
+            if (searchUpdatesFeedUpdated) {
+                _updatesScreenPagingState.update {
+                    it.copy(searchUpdatesFeedMangaList = searchUpdatesFeedMangaList.toList())
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            val (historyFeedUpdated, historyFeedMangaList) =
+                updateChapterDownloadForManga(
+                    chapterId,
+                    mangaId,
+                    download,
+                    _historyScreenPagingState.value.historyFeedMangaList,
+                )
+            if (historyFeedUpdated) {
+                _historyScreenPagingState.update {
+                    it.copy(historyFeedMangaList = historyFeedMangaList.toList())
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            val (updatesFeedUpdated, updatesFeedMangaList) =
+                updateChapterDownloadForManga(
+                    chapterId,
+                    mangaId,
+                    download,
+                    _updatesScreenPagingState.value.updatesFeedMangaList,
+                )
+            if (updatesFeedUpdated) {
+                _updatesScreenPagingState.update {
+                    it.copy(updatesFeedMangaList = updatesFeedMangaList.toList())
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            val (summaryUpdatesFeedUpdated, summaryUpdatesFeedMangaList) =
+                updateChapterDownloadForManga(
+                    chapterId,
+                    mangaId,
+                    download,
+                    _summaryScreenPagingState.value.updatesFeedMangaList,
+                )
+            if (summaryUpdatesFeedUpdated) {
+                _summaryScreenPagingState.update {
+                    it.copy(updatesFeedMangaList = summaryUpdatesFeedMangaList.toList())
+                }
+            }
+        }
+
+        viewModelScope.launchIO {
+            val (newlyAddedFeedUpdated, newlyAddedFeedMangaList) =
+                updateChapterDownloadForManga(
+                    chapterId,
+                    mangaId,
+                    download,
+                    _summaryScreenPagingState.value.newlyAddedFeedMangaList,
+                )
+            if (newlyAddedFeedUpdated) {
+                _summaryScreenPagingState.update {
+                    it.copy(newlyAddedFeedMangaList = newlyAddedFeedMangaList.toList())
+                }
+            }
+        }
+    }
+
+    private fun updateDownloadQueue(download: Download) {
+        val mutableList = _feedScreenState.value.downloads.toMutableList()
+        val indexOfDownload = mutableList.indexOfFirst {
+            it.chapterItem.chapter.id == download.chapterItem.id
+        }
+        if (indexOfDownload >= 0) {
+            if (download.status == Download.State.DOWNLOADED) {
+                mutableList.removeAt(indexOfDownload)
+            } else {
+                mutableList[indexOfDownload] =
+                    mutableList[indexOfDownload].copy(
+                        chapterItem =
+                            download.chapterItem.toChapterItem(download.status, download.progress)
+                    )
+            }
+
+            _feedScreenState.update { it.copy(downloads = mutableList.toList()) }
+        }
+    }
+
+    private fun observeDownloads() {
+
+        viewModelScope.launchIO {
+            downloadManager.queueState.debounce(100).collectLatest { queueDownloads ->
+                val downloads =
+                    queueDownloads
+                        .map { download ->
+                            DownloadItem(
+                                mangaItem = download.mangaItem,
+                                chapterItem =
+                                    download.chapterItem.toChapterItem(
+                                        download.status,
+                                        download.progress,
+                                    ),
+                            )
+                        }
+                        .toList()
+
+                _feedScreenState.update { it.copy(downloads = downloads) }
+            }
+        }
+
+        viewModelScope.launchIO {
+            combine(
+                    preferences.downloadOnlyOverUnmetered().changes().distinctUntilChanged(),
+                    downloadManager.isDownloaderRunning,
+                    downloadManager.networkStateFlow(),
+                ) { downloadOnlyOverWifi, downloadRunning, networkStateFlow ->
+                    Triple(downloadOnlyOverWifi, downloadRunning, networkStateFlow)
+                }
+                .collectLatest { results ->
+                    val result =
+                        if (!results.third.isUnmetered && results.first) {
+                            DownloaderStatus.NetworkPaused
+                        } else if (results.second) {
+                            DownloaderStatus.Running
+                        } else {
+                            DownloaderStatus.Paused
+                        }
+                    _feedScreenState.update { it.copy(downloaderStatus = result) }
+                }
+        }
+
+        viewModelScope.launchIO {
+            downloadManager
+                .statusFlow()
+                .catch { error -> TimberKt.e(error) }
+                .collect { download ->
+                    updateDownloadOnFeed(download.chapterItem.id, download.mangaItem.id, download)
+                    updateDownloadQueue(download)
+                }
+        }
+
+        viewModelScope.launchIO {
+            downloadManager
+                .progressFlow()
+                .catch { error -> TimberKt.e(error) }
+                .collect { download ->
+                    updateDownloadOnFeed(download.chapterItem.id, download.mangaItem.id, download)
+                    updateDownloadQueue(download)
+                }
+        }
+    }
+
+    fun populateItems() {
+        viewModelScope.launchIO {
+            _updatesScreenPagingState.update {
+                it.copy(updatesFeedMangaList = lastUpdatesFeedMangaList ?: it.updatesFeedMangaList)
+            }
+            _historyScreenPagingState.update {
+                it.copy(historyFeedMangaList = lastHistoryFeedMangaList ?: it.historyFeedMangaList)
+            }
+            _summaryScreenPagingState.update {
+                it.copy(
+                    updatesFeedMangaList =
+                        lastSummaryUpdatesFeedMangaList ?: it.updatesFeedMangaList,
+                    continueReadingList = lastContinueReadingList ?: it.continueReadingList,
+                    newlyAddedFeedMangaList =
+                        lastSummaryNewlyAddedFeedMangaList ?: it.newlyAddedFeedMangaList,
+                )
+            }
+            lastUpdatesFeedMangaList = null
+            lastHistoryFeedMangaList = null
+            lastSummaryUpdatesFeedMangaList = null
+            lastContinueReadingList = null
+            lastSummaryNewlyAddedFeedMangaList = null
+        }
+        viewModelScope.launchIO { loadSummaryPage() }
+        viewModelScope.launchIO { refreshUpdatesFeed() }
+        viewModelScope.launchIO { refreshHistoryFeed() }
+    }
+
+    companion object {
+
+        private var lastUpdatesFeedMangaList: List<FeedManga>? = null
+        private var lastHistoryFeedMangaList: List<FeedManga>? = null
+        private var lastSummaryUpdatesFeedMangaList: List<FeedManga>? = null
+        private var lastContinueReadingList: List<FeedManga>? = null
+        private var lastSummaryNewlyAddedFeedMangaList: List<FeedManga>? = null
+
+        fun onLowMemory() {
+            lastUpdatesFeedMangaList = null
+            lastHistoryFeedMangaList = null
+            lastSummaryUpdatesFeedMangaList = null
+            lastContinueReadingList = null
+            lastSummaryNewlyAddedFeedMangaList = null
+        }
+
+        const val HISTORY_ENDLESS_LIMIT = 15
+        const val UPDATES_ENDLESS_LIMIT = 200
+    }
+}
+
+/**
+ * The queue with [chapterId]'s download moved to the top or bottom, or null when that chapter is no
+ * longer queued or is already there, so the downloader is not paused and restarted for nothing. The
+ * download list on screen can still show a chapter that has just finished or been removed.
+ */
+internal fun List<Download>.withChapterMoved(
+    chapterId: Long,
+    direction: MoveDownloadDirection,
+): List<Download>? {
+    val (moved, rest) = partition { download -> download.chapterItem.id == chapterId }
+    if (moved.isEmpty()) return null
+    val reordered =
+        when (direction) {
+            MoveDownloadDirection.Top -> moved + rest
+            MoveDownloadDirection.Bottom -> rest + moved
+        }
+    return reordered.takeIf { it != this }
+}
+
+/**
+ * The queue with [mangaId]'s downloads moved to the top or bottom, or null when none of them is
+ * queued anymore or they are already there, so the downloader is not paused and restarted for
+ * nothing.
+ */
+internal fun List<Download>.withSeriesMoved(
+    mangaId: Long,
+    direction: MoveDownloadDirection,
+): List<Download>? {
+    val (moved, rest) = partition { download -> download.mangaItem.id == mangaId }
+    if (moved.isEmpty()) return null
+    val reordered =
+        when (direction) {
+            MoveDownloadDirection.Top -> moved + rest
+            MoveDownloadDirection.Bottom -> rest + moved
+        }
+    return reordered.takeIf { it != this }
+}

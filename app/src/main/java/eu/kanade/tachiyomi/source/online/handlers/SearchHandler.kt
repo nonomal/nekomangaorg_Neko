@@ -5,7 +5,6 @@ import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.Result
 import com.github.michaelbull.result.andThen
 import com.github.michaelbull.result.mapError
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.network.services.MangaDexService
 import eu.kanade.tachiyomi.network.services.NetworkServices
 import eu.kanade.tachiyomi.source.model.MangaListPage
@@ -17,8 +16,6 @@ import eu.kanade.tachiyomi.source.online.utils.toSourceManga
 import eu.kanade.tachiyomi.util.getOrResultError
 import eu.kanade.tachiyomi.util.lang.toResultError
 import java.util.Calendar
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.nekomanga.constants.MdConstants
@@ -26,6 +23,7 @@ import org.nekomanga.core.network.ProxyRetrofitQueryMap
 import org.nekomanga.domain.SourceResult
 import org.nekomanga.domain.filter.DexFilters
 import org.nekomanga.domain.network.ResultError
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -33,7 +31,7 @@ import uy.kohesive.injekt.injectLazy
 
 class SearchHandler {
     private val service: MangaDexService by lazy { Injekt.get<NetworkServices>().service }
-    private val preferencesHelper: PreferencesHelper by injectLazy()
+    private val mangaDexPreferences: MangaDexPreferences by injectLazy()
 
     suspend fun searchForManga(mangaUUID: String): Result<MangaListPage, ResultError> {
         return service
@@ -41,11 +39,8 @@ class SearchHandler {
             .getOrResultError("trying to view manga with UUID $mangaUUID")
             .andThen { mangaDto ->
                 val sourceManga =
-                    persistentListOf(
-                        mangaDto.data.toSourceManga(
-                            preferencesHelper.thumbnailQuality().get(),
-                            false
-                        )
+                    listOf(
+                        mangaDto.data.toSourceManga(mangaDexPreferences.coverQuality().get(), false)
                     )
                 Ok(MangaListPage(sourceManga = sourceManga, hasNextPage = false))
             }
@@ -65,7 +60,7 @@ class SearchHandler {
                                 information = it.attributes.biography.asMdMap<String>()["en"] ?: "",
                             )
                         }
-                        .toImmutableList()
+                        .toList()
                 Ok(ResultListPage(hasNextPage = false, results = results))
             }
     }
@@ -84,7 +79,7 @@ class SearchHandler {
                                 information = it.attributes.description ?: "",
                             )
                         }
-                        .toImmutableList()
+                        .toList()
                 Ok(ResultListPage(hasNextPage = false, results = results))
             }
     }
@@ -100,40 +95,45 @@ class SearchHandler {
                 queryParameters[MdConstants.SearchParameters.titleParam] = actualQuery
             }
 
-            val contentRating = filters.contentRatings.filter { it.state }.map { it.rating.key }
+            val contentRating =
+                filters.contentRatings.mapNotNull { if (it.state) it.rating.key else null }
 
             if (contentRating.isNotEmpty()) {
                 queryParameters[MdConstants.SearchParameters.contentRatingParam] = contentRating
             }
 
             val originalLanguage =
-                filters.originalLanguage.filter { it.state }.map { it.language.lang }
+                filters.originalLanguage.mapNotNull { if (it.state) it.language.lang else null }
             if (originalLanguage.isNotEmpty()) {
                 queryParameters[MdConstants.SearchParameters.originalLanguageParam] =
                     originalLanguage
             }
 
             val demographics =
-                filters.publicationDemographics.filter { it.state }.map { it.demographic.key }
+                filters.publicationDemographics.mapNotNull {
+                    if (it.state) it.demographic.key else null
+                }
             if (demographics.isNotEmpty()) {
                 queryParameters[MdConstants.SearchParameters.publicationDemographicParam] =
                     demographics
             }
 
-            val status = filters.statuses.filter { it.state }.map { it.status.key }
+            val status = filters.statuses.mapNotNull { if (it.state) it.status.key else null }
             if (status.isNotEmpty()) {
                 queryParameters[MdConstants.SearchParameters.statusParam] = status
             }
             val tagsToInclude =
-                filters.tags.filter { it.state == ToggleableState.On }.map { it.tag.uuid }
+                filters.tags.mapNotNull {
+                    if (it.state == ToggleableState.On) it.tag.uuid else null
+                }
             if (tagsToInclude.isNotEmpty()) {
                 queryParameters[MdConstants.SearchParameters.includedTagsParam] = tagsToInclude
             }
 
             val tagsToExclude =
-                filters.tags
-                    .filter { it.state == ToggleableState.Indeterminate }
-                    .map { it.tag.uuid }
+                filters.tags.mapNotNull {
+                    if (it.state == ToggleableState.Indeterminate) it.tag.uuid else null
+                }
             if (tagsToExclude.isNotEmpty()) {
                 queryParameters[MdConstants.SearchParameters.excludedTagsParam] = tagsToExclude
             }
@@ -144,7 +144,7 @@ class SearchHandler {
 
             if (filters.hasAvailableChapters.state) {
                 queryParameters[MdConstants.SearchParameters.availableTranslatedLanguage] =
-                    MdUtil.getLangsToShow(preferencesHelper)
+                    MdUtil.getLangsToShow(mangaDexPreferences)
             }
 
             queryParameters[MdConstants.SearchParameters.includedTagModeParam] =
@@ -176,11 +176,11 @@ class SearchHandler {
             val queryParameters = mutableMapOf<String, Any>()
             queryParameters[MdConstants.SearchParameters.limit] = MdConstants.Limits.manga
             queryParameters[MdConstants.SearchParameters.offset] = MdUtil.getMangaListOffset(page)
-            val contentRatings = preferencesHelper.contentRatingSelections().get().toList()
+            val contentRatings = mangaDexPreferences.visibleContentRatings().get().toList()
             if (contentRatings.isNotEmpty()) {
                 queryParameters["contentRating[]"] = contentRatings
             }
-            val thumbQuality = preferencesHelper.thumbnailQuality().get()
+            val thumbQuality = mangaDexPreferences.coverQuality().get()
             service
                 .recentlyAdded(ProxyRetrofitQueryMap(queryParameters))
                 .getOrResultError("Error getting recently added")
@@ -195,8 +195,8 @@ class SearchHandler {
                                 mangaListDto.data
                                     .distinctBy { it.id }
                                     .map { it.toSourceManga(thumbQuality) }
-                                    .toImmutableList()
-                        ),
+                                    .toList(),
+                        )
                     )
                 }
         }
@@ -212,11 +212,11 @@ class SearchHandler {
             calendar.add(Calendar.DAY_OF_MONTH, 1)
             calendar.add(Calendar.MONTH, -1)
             queryParameters["createdAtSince"] = MdUtil.apiDateFormat.format(calendar.time)
-            val contentRatings = preferencesHelper.contentRatingSelections().get().toList()
+            val contentRatings = mangaDexPreferences.visibleContentRatings().get().toList()
             if (contentRatings.isNotEmpty()) {
                 queryParameters["contentRating[]"] = contentRatings
             }
-            val thumbQuality = preferencesHelper.thumbnailQuality().get()
+            val thumbQuality = mangaDexPreferences.coverQuality().get()
             service
                 .popularNewReleases(ProxyRetrofitQueryMap(queryParameters))
                 .getOrResultError("Error getting recently added")
@@ -232,11 +232,11 @@ class SearchHandler {
                                     .mapIndexed { index, dto ->
                                         dto.toSourceManga(
                                             thumbQuality,
-                                            displayText = "No. ${offset + index + 1}"
+                                            displayText = "No. ${offset + index + 1}",
                                         )
                                     }
-                                    .toImmutableList(),
-                        ),
+                                    .toList(),
+                        )
                     )
                 }
         }
@@ -246,9 +246,8 @@ class SearchHandler {
         return com.github.michaelbull.result
             .runCatching {
                 val hasMoreResults = mangaListDto.limit + mangaListDto.offset < mangaListDto.total
-                val thumbQuality = preferencesHelper.thumbnailQuality().get()
-                val mangaList =
-                    mangaListDto.data.map { it.toSourceManga(thumbQuality) }.toImmutableList()
+                val thumbQuality = mangaDexPreferences.coverQuality().get()
+                val mangaList = mangaListDto.data.map { it.toSourceManga(thumbQuality) }.toList()
                 MangaListPage(hasNextPage = hasMoreResults, sourceManga = mangaList)
             }
             .mapError {

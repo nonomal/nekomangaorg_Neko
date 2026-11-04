@@ -5,8 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
-import androidx.core.app.NotificationManagerCompat
 import eu.kanade.tachiyomi.util.system.notificationManager
 import org.nekomanga.R
 
@@ -30,6 +28,7 @@ object Notifications {
             const val Skipped = "library_skipped_channel"
         }
 
+        const val Authentication = "authentication_channel"
         const val Installing = "installing_channel"
         const val Status = "status_channel"
         const val Tracking = "tracking_channel"
@@ -37,9 +36,15 @@ object Notifications {
     }
 
     object Id {
+        object Authentication {
+            const val SessionExpired = 1_000_000
+        }
+
         object Download {
             const val Progress = -201
             const val Error = -202
+            const val ReindexProgress = -203
+            const val ReindexComplete = -204
         }
 
         object Library {
@@ -98,10 +103,7 @@ object Notifications {
     const val CHANNEL_INCOGNITO_MODE = "incognito_mode_channel"
     const val ID_INCOGNITO_MODE = -701
 
-    private val deprecatedChannels =
-        listOf(
-            "library_channel",
-        )
+    private val deprecatedChannels = listOf("library_channel")
 
     /**
      * Creates the notification channels introduced in Android Oreo.
@@ -109,7 +111,6 @@ object Notifications {
      * @param context The application context.
      */
     fun createChannels(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         listOf(
                 NotificationChannelGroup(
                     GROUP_BACKUP_RESTORE,
@@ -122,11 +123,11 @@ object Notifications {
                 ),
                 NotificationChannelGroup(
                     Group.Download,
-                    context.getString(R.string.group_downloader)
+                    context.getString(R.string.group_downloader),
                 ),
                 NotificationChannelGroup(
                     GROUP_APP_UPDATES,
-                    context.getString(R.string.app_updates)
+                    context.getString(R.string.app_updates),
                 ),
             )
             .forEach(context.notificationManager::createNotificationChannelGroup)
@@ -230,6 +231,12 @@ object Notifications {
                     NotificationManager.IMPORTANCE_HIGH,
                 ),
                 NotificationChannel(
+                        Channel.Authentication,
+                        context.getString(R.string.authentication_channel),
+                        NotificationManager.IMPORTANCE_HIGH,
+                    )
+                    .apply { setShowBadge(true) },
+                NotificationChannel(
                         CHANNEL_INCOGNITO_MODE,
                         context.getString(R.string.incognito_mode),
                         NotificationManager.IMPORTANCE_LOW,
@@ -237,7 +244,7 @@ object Notifications {
                     .apply { lockscreenVisibility = Notification.VISIBILITY_SECRET },
                 NotificationChannel(
                         Channel.Status,
-                        context.getString(R.string.sync_follows_to_library),
+                        context.getString(R.string.pull_follows_to_library),
                         NotificationManager.IMPORTANCE_LOW,
                     )
                     .apply { setShowBadge(false) },
@@ -273,16 +280,12 @@ object Notifications {
     }
 
     fun isNotificationChannelEnabled(context: Context, channelId: String?): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (!channelId.isNullOrBlank()) {
-                val manager =
-                    context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                val channel = manager.getNotificationChannel(channelId)
-                return channel.importance != NotificationManager.IMPORTANCE_NONE
-            }
-            false
-        } else {
-            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        if (!channelId.isNullOrBlank()) {
+            val manager =
+                context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = manager.getNotificationChannel(channelId)
+            return channel != null && channel.importance != NotificationManager.IMPORTANCE_NONE
         }
+        return false
     }
 }

@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Newspaper
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -30,7 +28,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.zIndex
 import org.nekomanga.presentation.components.LauncherIcon
@@ -65,10 +62,7 @@ fun InfoScreen(
                             )
                         }
                         .windowInsetsPadding(NavigationBarDefaults.windowInsets)
-                        .padding(
-                            horizontal = Size.medium,
-                            vertical = Size.small,
-                        ),
+                        .padding(horizontal = Size.medium, vertical = Size.small)
             ) {
                 Button(
                     modifier = Modifier.fillMaxWidth(),
@@ -81,18 +75,14 @@ fun InfoScreen(
                 if (rejectText != null && onRejectClick != null) {
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth(),
-                        border =
-                            BorderStroke(
-                                width = Size.extraExtraTiny,
-                                color = tint,
-                            ),
+                        border = BorderStroke(width = Size.extraExtraTiny, color = tint),
                         onClick = onRejectClick,
                     ) {
                         Text(text = rejectText)
                     }
                 }
             }
-        },
+        }
     ) { paddingValues ->
         // Status bar scrim
         Box(
@@ -100,7 +90,7 @@ fun InfoScreen(
                 Modifier.zIndex(2f)
                     .background(MaterialTheme.colorScheme.background)
                     .fillMaxWidth()
-                    .height(paddingValues.calculateTopPadding()),
+                    .height(paddingValues.calculateTopPadding())
         )
 
         Column(
@@ -109,7 +99,7 @@ fun InfoScreen(
                     .fillMaxWidth()
                     .padding(paddingValues)
                     .padding(top = Size.large)
-                    .padding(horizontal = Size.medium),
+                    .padding(horizontal = Size.medium)
         ) {
             when (icon != null) {
                 true -> {
@@ -131,32 +121,16 @@ fun InfoScreen(
                 modifier = Modifier.fillMaxWidth(),
                 text = headingText,
                 style = MaterialTheme.typography.headlineLarge,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
             )
             Text(
                 text = subtitleText,
                 modifier = Modifier.padding(vertical = Size.small),
                 style = MaterialTheme.typography.titleSmall,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
             )
 
             content()
         }
-    }
-}
-
-@Preview
-@Composable
-private fun InfoScaffoldPreview() {
-    InfoScreen(
-        icon = Icons.Outlined.Newspaper,
-        headingText = "Heading",
-        subtitleText = "Subtitle",
-        acceptText = "Accept",
-        onAcceptClick = {},
-        rejectText = "Reject",
-        onRejectClick = {},
-    ) {
-        Text("Hello world")
     }
 }

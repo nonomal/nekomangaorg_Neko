@@ -3,34 +3,32 @@ package eu.kanade.tachiyomi.jobs.tracking
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.util.system.launchIO
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.tryToSetForeground
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import org.nekomanga.R
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.injectLazy
 
 /** WorkManager job that syncs tracking from trackers to Neko */
-class TrackingSyncJob(
-    val context: Context,
-    params: WorkerParameters,
-) : CoroutineWorker(context, params) {
+class TrackingSyncJob(val context: Context, params: WorkerParameters) :
+    CoroutineWorker(context, params) {
 
     private val trackingSyncService: TrackSyncProcessor by injectLazy()
-
-    // List containing failed updates
-    private val failedUpdates = mutableMapOf<Manga, String?>()
 
     private val progressNotification =
         with(applicationContext.notificationBuilder(Notifications.Channel.Tracking)) {
@@ -64,17 +62,16 @@ class TrackingSyncJob(
         tryToSetForeground()
 
         try {
-            trackingSyncService.process(
-                ::updateNotificationProgress,
-                ::completeNotification,
-            )
+            trackingSyncService.process(::updateNotificationProgress, ::completeNotification)
 
             return@coroutineScope Result.success()
         } catch (e: Exception) {
             TimberKt.e(e) { "error refreshing tracking metadata" }
             return@coroutineScope Result.failure()
         } finally {
-            launchIO { context.notificationManager.cancel(Notifications.Id.Tracking.Progress) }
+            withContext(NonCancellable + Dispatchers.IO) {
+                context.notificationManager.cancel(Notifications.Id.Tracking.Progress)
+            }
         }
     }
 
@@ -95,16 +92,22 @@ class TrackingSyncJob(
         )
     }
 
-    private fun failed(manga: Manga, error: String) {
-        failedUpdates[manga] = error
-    }
-
     companion object {
 
         val TAG = "tracking_sync_job"
 
         fun doWorkNow(context: Context) {
-            val request = OneTimeWorkRequestBuilder<TrackingSyncJob>().addTag(TAG).build()
+            val constraints =
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiresBatteryNotLow(true)
+                    .build()
+
+            val request =
+                OneTimeWorkRequestBuilder<TrackingSyncJob>()
+                    .addTag(TAG)
+                    .setConstraints(constraints)
+                    .build()
 
             WorkManager.getInstance(context)
                 .enqueueUniqueWork(TAG, ExistingWorkPolicy.REPLACE, request)

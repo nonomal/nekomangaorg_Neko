@@ -1,30 +1,29 @@
 package org.nekomanga.presentation.components.dialog
 
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
-import androidx.compose.material.ripple.LocalRippleTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import kotlinx.collections.immutable.ImmutableList
 import org.nekomanga.R
 import org.nekomanga.domain.chapter.ChapterItem
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
 
 @Composable
 fun RemovedChaptersDialog(
     themeColorState: ThemeColorState,
-    chapters: ImmutableList<ChapterItem>,
+    chapters: List<ChapterItem>,
     onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     CompositionLocalProvider(
-        LocalRippleTheme provides themeColorState.rippleTheme,
-        LocalTextSelectionColors provides themeColorState.textSelectionColors
+        LocalRippleConfiguration provides themeColorState.rippleConfiguration,
+        LocalTextSelectionColors provides themeColorState.textSelectionColors,
     ) {
         val context = LocalContext.current
 
@@ -48,7 +47,7 @@ fun RemovedChaptersDialog(
                             } else {
                                 chapterNames.joinToString(", ")
                             },
-                        ),
+                        )
                 )
             },
             onDismissRequest = onDismiss,
@@ -59,7 +58,9 @@ fun RemovedChaptersDialog(
                         onDismiss()
                     },
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor),
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = R.string.delete))
                 }
@@ -68,7 +69,9 @@ fun RemovedChaptersDialog(
                 TextButton(
                     onClick = onDismiss,
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor)
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = R.string.keep))
                 }

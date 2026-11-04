@@ -1,0 +1,270 @@
+package org.nekomanga.presentation.screens.settings.screens
+
+import android.content.Context
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.core.app.ActivityCompat
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.ui.main.states.SideNavAlignment
+import eu.kanade.tachiyomi.ui.main.states.SideNavMode
+import eu.kanade.tachiyomi.ui.manga.MangaConstants
+import eu.kanade.tachiyomi.util.system.getActivity
+import org.nekomanga.R
+import org.nekomanga.domain.details.MangaDetailsPreferences
+import org.nekomanga.domain.library.LibraryPreferences
+import org.nekomanga.presentation.components.theme.ThemeFollowSystemSwitch
+import org.nekomanga.presentation.components.theme.ThemeSelector
+import org.nekomanga.presentation.extensions.collectAsState
+import org.nekomanga.presentation.screens.settings.Preference
+import org.nekomanga.presentation.screens.settings.widgets.SearchTerm
+import org.nekomanga.presentation.theme.Size
+
+internal class AppearanceSettingsScreen(
+    incognitoMode: Boolean,
+    val mangaDetailsPreferences: MangaDetailsPreferences,
+    val libraryPreferences: LibraryPreferences,
+    val preferences: PreferencesHelper,
+    onNavigationIconClick: (() -> Unit)?,
+) : SearchableSettings(onNavigationIconClick, incognitoMode) {
+    override fun getTitleRes(): Int = R.string.appearance
+
+    @Composable
+    override fun getPreferences(): List<Preference> {
+
+        val context = LocalContext.current
+
+        val nightMode by preferences.nightMode().collectAsState()
+
+        return listOf(appearanceGroup(nightMode), detailGroup(), navigationGroup(context))
+    }
+
+    @Composable
+    fun appearanceGroup(nightMode: Int): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(R.string.app_theme),
+            preferenceItems =
+                listOf(
+                    Preference.PreferenceItem.CustomPreference(
+                        title = stringResource(R.string.light_theme),
+                        content = {
+                            ThemeSelector(
+                                modifier = Modifier.fillMaxWidth(),
+                                preferences = preferences,
+                                darkThemeSelector = false,
+                            )
+                        },
+                    ),
+                    Preference.PreferenceItem.CustomPreference(
+                        title = stringResource(R.string.dark_theme),
+                        content = {
+                            ThemeSelector(
+                                modifier = Modifier.fillMaxWidth(),
+                                preferences = preferences,
+                                darkThemeSelector = true,
+                            )
+                        },
+                    ),
+                    Preference.PreferenceItem.CustomPreference(
+                        title = "",
+                        content = {
+                            ThemeFollowSystemSwitch(
+                                modifier =
+                                    Modifier.padding(
+                                        start = Size.medium,
+                                        end = Size.medium,
+                                        top = Size.medium,
+                                    ),
+                                textStyle =
+                                    MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Normal
+                                    ),
+                                nightMode = nightMode,
+                                nightModePreference = preferences.nightMode(),
+                            )
+                        },
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        title = stringResource(R.string.use_vivid_colors_for_headers),
+                        pref = preferences.useVividColorHeaders(),
+                    ),
+                ),
+        )
+    }
+
+    @Composable
+    fun detailGroup(): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(R.string.details_page),
+            preferenceItems =
+                listOf(
+                    Preference.PreferenceItem.SwitchPreference(
+                        pref = mangaDetailsPreferences.forcePortrait(),
+                        title = stringResource(R.string.force_portrait_details),
+                        subtitle = stringResource(R.string.force_portrait_details_description),
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        pref = mangaDetailsPreferences.autoThemeByCover(),
+                        title = stringResource(R.string.theme_buttons_based_on_cover),
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        pref = mangaDetailsPreferences.dynamicCovers(),
+                        title = stringResource(R.string.dynamic_cover),
+                        subtitle = stringResource(R.string.dynamic_cover_summary),
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        pref = mangaDetailsPreferences.hideButtonText(),
+                        title = stringResource(R.string.hide_button_text),
+                    ),
+                    Preference.PreferenceItem.ListPreference(
+                        pref = mangaDetailsPreferences.backdropSize(),
+                        title = stringResource(R.string.backdrop_size),
+                        entries =
+                            mapOf(
+                                MangaConstants.BackdropSize.Small to stringResource(R.string.small),
+                                MangaConstants.BackdropSize.Default to
+                                    stringResource(R.string.default_size),
+                                MangaConstants.BackdropSize.Large to stringResource(R.string.large),
+                            ),
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        pref = mangaDetailsPreferences.wrapAltTitles(),
+                        title = stringResource(R.string.wrap_alt_titles),
+                    ),
+                    Preference.PreferenceItem.ListPreference(
+                        pref = mangaDetailsPreferences.chapterSwipeRightAction(),
+                        title = stringResource(R.string.chapter_swipe_right_action),
+                        entries = chapterSwipeActionEntries(),
+                    ),
+                    Preference.PreferenceItem.ListPreference(
+                        pref = mangaDetailsPreferences.chapterSwipeLeftAction(),
+                        title = stringResource(R.string.chapter_swipe_left_action),
+                        entries = chapterSwipeActionEntries(),
+                    ),
+                ),
+        )
+    }
+
+    @Composable
+    private fun chapterSwipeActionEntries(): Map<MangaConstants.ChapterSwipeAction, String> {
+        return mapOf(
+            MangaConstants.ChapterSwipeAction.Disabled to stringResource(R.string.disabled),
+            MangaConstants.ChapterSwipeAction.ToggleRead to stringResource(R.string.mark_as_read),
+            MangaConstants.ChapterSwipeAction.ToggleBookmark to
+                stringResource(R.string.add_bookmark),
+            MangaConstants.ChapterSwipeAction.Download to stringResource(R.string.download),
+        )
+    }
+
+    @Composable
+    fun navigationGroup(context: Context): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = stringResource(R.string.navigation),
+            preferenceItems =
+                listOf(
+                    Preference.PreferenceItem.ListPreference(
+                        pref = preferences.sideNavIconAlignment(),
+                        title = stringResource(R.string.side_nav_icon_alignment),
+                        entries =
+                            mapOf(
+                                SideNavAlignment.Top to stringResource(R.string.top),
+                                SideNavAlignment.Center to stringResource(R.string.center),
+                                SideNavAlignment.Bottom to stringResource(R.string.bottom),
+                            ),
+                    ),
+                    Preference.PreferenceItem.ListPreference(
+                        pref = preferences.sideNavMode(),
+                        title = stringResource(R.string.use_side_navigation),
+                        entries =
+                            mapOf(
+                                SideNavMode.Default to stringResource(R.string.default_behavior),
+                                SideNavMode.Never to stringResource(R.string.never),
+                                SideNavMode.Always to stringResource(R.string.always),
+                            ),
+                        onValueChanged = {
+                            context.getActivity()?.let { activity ->
+                                ActivityCompat.recreate(activity)
+                            }
+                            true
+                        },
+                    ),
+                    Preference.PreferenceItem.InfoPreference(
+                        title = stringResource(R.string.by_default_side_nav_info)
+                    ),
+                ),
+        )
+    }
+
+    companion object : SearchTermProvider {
+        @Composable
+        override fun getSearchTerms(): List<SearchTerm> {
+            return listOf(
+                SearchTerm(
+                    title = stringResource(R.string.light_theme),
+                    group = stringResource(R.string.app_theme),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.dark_theme),
+                    group = stringResource(R.string.app_theme),
+                ),
+                SearchTerm(title = stringResource(R.string.use_vivid_colors_for_headers)),
+                SearchTerm(
+                    title = stringResource(R.string.force_portrait_details),
+                    subtitle = stringResource(R.string.force_portrait_details_description),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.details_page),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.theme_buttons_based_on_cover),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.dynamic_cover),
+                    subtitle = stringResource(R.string.dynamic_cover_summary),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.hide_button_text),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.backdrop_size),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.wrap_alt_titles),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.chapter_swipe_right_action),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.chapter_swipe_left_action),
+                    group = stringResource(R.string.details_page),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.side_nav_icon_alignment),
+                    group = stringResource(R.string.navigation),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.use_side_navigation),
+                    group = stringResource(R.string.navigation),
+                ),
+                SearchTerm(
+                    title = stringResource(R.string.by_default_side_nav_info),
+                    group = stringResource(R.string.navigation),
+                ),
+            )
+        }
+    }
+}

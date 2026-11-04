@@ -3,7 +3,6 @@ package eu.kanade.tachiyomi.ui.manga
 import androidx.annotation.StringRes
 import java.text.DateFormat
 import java.time.LocalDate
-import kotlinx.collections.immutable.ImmutableList
 import org.nekomanga.domain.track.TrackItem
 import org.nekomanga.domain.track.TrackSearchItem
 import org.nekomanga.domain.track.TrackServiceItem
@@ -15,14 +14,14 @@ object TrackingConstants {
     data class TrackingDate(
         val readingDate: ReadingDate,
         val currentDate: Long,
-        val dateFormat: DateFormat
+        val dateFormat: DateFormat,
     )
 
     data class TrackingSuggestedDates(val startDate: Long, val finishedDate: Long)
 
     sealed class TrackDateChange(
         val readingDate: ReadingDate,
-        val trackAndService: TrackAndService
+        val trackAndService: TrackAndService,
     ) {
         class RemoveTrackingDate(readingDate: ReadingDate, trackAndService: TrackAndService) :
             TrackDateChange(readingDate, trackAndService)
@@ -30,7 +29,7 @@ object TrackingConstants {
         class EditTrackingDate(
             readingDate: ReadingDate,
             val newDate: LocalDate,
-            trackAndService: TrackAndService
+            trackAndService: TrackAndService,
         ) : TrackDateChange(readingDate, trackAndService)
     }
 
@@ -39,9 +38,12 @@ object TrackingConstants {
 
         object NoResult : TrackSearchResult()
 
-        class Success(val trackSearchResult: ImmutableList<TrackSearchItem>) : TrackSearchResult()
+        class Success(
+            val trackSearchResult: List<TrackSearchItem>,
+            val hasMatchingId: Boolean = false,
+        ) : TrackSearchResult()
 
-        class Error(val errorMessage: String, @StringRes val trackerNameRes: Int) :
+        class Error(val errorMessage: String, @param:StringRes val trackerNameRes: Int) :
             TrackSearchResult()
     }
 

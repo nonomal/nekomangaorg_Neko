@@ -7,11 +7,18 @@ import androidx.compose.ui.unit.Dp
 import kotlin.math.ln
 import org.nekomanga.presentation.theme.Size
 
-fun ColorScheme.surfaceColorAtElevationCustomColor(
-    color: Color,
-    elevation: Dp,
-): Color {
+fun ColorScheme.surfaceColorAtElevationCustomColor(color: Color, elevation: Dp): Color {
     if (elevation == Size.none) return surface
     val alpha = ((4.5f * ln(elevation.value + 1)) + 2f) / 100f
     return color.copy(alpha = alpha).compositeOver(surface)
+}
+
+fun Color.surfaceColorAtElevationCustomColor(
+    surfaceColor: Color,
+    color: Color,
+    elevation: Dp,
+): Color {
+    if (elevation == Size.none) return surfaceColor
+    val alpha = ((4.5f * ln(elevation.value + 1)) + 2f) / 100f
+    return color.copy(alpha = alpha).compositeOver(surfaceColor)
 }

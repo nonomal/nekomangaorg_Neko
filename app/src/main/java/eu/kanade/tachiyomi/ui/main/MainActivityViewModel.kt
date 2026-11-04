@@ -1,0 +1,159 @@
+package eu.kanade.tachiyomi.ui.main
+
+import android.app.Application
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.navigation3.runtime.NavKey
+import eu.kanade.tachiyomi.crash.CrashReport
+import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.updater.AppDownloadInstallJob
+import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
+import eu.kanade.tachiyomi.data.updater.AppUpdateResult
+import eu.kanade.tachiyomi.data.updater.Release
+import eu.kanade.tachiyomi.data.updater.SimpleGithubRelease
+import eu.kanade.tachiyomi.util.manga.MangaCoverMetadata
+import eu.kanade.tachiyomi.util.manga.MangaShortcutManager
+import eu.kanade.tachiyomi.util.system.launchIO
+import eu.kanade.tachiyomi.util.system.launchNonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.nekomanga.core.preferences.observeAndUpdate
+import org.nekomanga.core.preferences.toggle
+import org.nekomanga.core.security.SecurityPreferences
+import org.nekomanga.logging.TimberKt
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
+
+class MainActivityViewModel : ViewModel() {
+
+    private val updateChecker by lazy { AppUpdateChecker() }
+    private val crashReport by lazy { CrashReport.forContext(Injekt.get<Application>()) }
+    private val mangaShortcutManager: MangaShortcutManager by injectLazy()
+    private val application: Application = Injekt.get()
+
+    private val _deepLinkScreen = MutableStateFlow<List<NavKey>?>(null)
+    val deepLinkScreen: StateFlow<List<NavKey>?> = _deepLinkScreen.asStateFlow()
+
+    val downloadManager: DownloadManager by injectLazy()
+
+    fun setDeepLink(screens: List<NavKey>) {
+        _deepLinkScreen.value = screens
+    }
+
+    fun consumeDeepLink() {
+        _deepLinkScreen.value = null
+    }
+
+    fun consumeAppUpdateResult() {
+        _mainScreenState.update { it.copy(appUpdateResult = null) }
+    }
+
+    fun addAppUpdateResult(url: String, notes: String, releaseLink: String, version: String) {
+        _mainScreenState.update {
+            it.copy(
+                appUpdateResult =
+                    AppUpdateResult.NewUpdate(
+                        SimpleGithubRelease(
+                            version = version,
+                            downloadLink = url,
+                            info = notes,
+                            releaseLink = releaseLink,
+                        )
+                    )
+            )
+        }
+    }
+
+    fun downloadUpdate(release: Release) {
+        viewModelScope.launchNonCancellable {
+            try {
+                AppDownloadInstallJob.start(
+                    application,
+                    release.downloadLink,
+                    true,
+                    version = release.version,
+                )
+            } catch (e: Exception) {
+                TimberKt.e(e) { "Failed to start update download" }
+            }
+        }
+    }
+
+    val securityPreferences: SecurityPreferences = Injekt.get()
+    val preferences: PreferencesHelper = Injekt.get()
+
+    private val _mainScreenState = MutableStateFlow(MainScreenState())
+    val mainScreenState: StateFlow<MainScreenState> = _mainScreenState.asStateFlow()
+
+    fun setWhatsNewDialog(shouldShow: Boolean) {
+        _mainScreenState.update { it.copy(showWhatsNewDialog = shouldShow) }
+    }
+
+    fun dismissCrashReport() {
+        _mainScreenState.update { it.copy(pendingCrashReport = null) }
+        viewModelScope.launchIO { crashReport.markSeen() }
+    }
+
+    init {
+        securityPreferences.incognitoMode().changes().observeAndUpdate(viewModelScope) {
+            incognitoMode ->
+            _mainScreenState.update { it.copy(incognitoMode = incognitoMode) }
+        }
+
+        preferences.sideNavIconAlignment().changes().observeAndUpdate(viewModelScope) {
+            sideNavAlignment ->
+            _mainScreenState.update { it.copy(sideNavAlignment = sideNavAlignment) }
+        }
+
+        preferences.sideNavMode().changes().observeAndUpdate(viewModelScope) { sideNavMode ->
+            _mainScreenState.update { it.copy(sideNavMode = sideNavMode) }
+        }
+
+        viewModelScope.launchIO {
+            val update = runCatching {
+                updateChecker.checkForUpdate()
+            }
+                .getOrElse { error -> AppUpdateResult.CantCheckForUpdate(error.message ?: "Error") }
+
+            if (update is AppUpdateResult.NewUpdate) {
+                _mainScreenState.update { it.copy(appUpdateResult = update) }
+            }
+        }
+
+        viewModelScope.launchIO {
+            val report = runCatching {
+                crashReport.pendingReport()
+            }
+                .onFailure { TimberKt.e(it) { "Could not read the crash report" } }
+                .getOrNull()
+            if (report != null) {
+                _mainScreenState.update { it.copy(pendingCrashReport = report) }
+            }
+        }
+    }
+
+    fun toggleIncoginito() {
+        viewModelScope.launch { securityPreferences.incognitoMode().toggle() }
+    }
+
+    fun onboardingCompleted() {
+        viewModelScope.launch { preferences.hasShownOnboarding().set(true) }
+    }
+
+    fun saveExtras(currentTabIsLibrary: Boolean) {
+        viewModelScope.launch {
+            val startingTab = if (currentTabIsLibrary) 0 else 1
+            preferences.lastUsedStartingTab().set(startingTab)
+        }
+
+        viewModelScope.launch {
+            mangaShortcutManager.updateShortcuts()
+            MangaCoverMetadata.savePrefs()
+        }
+    }
+}

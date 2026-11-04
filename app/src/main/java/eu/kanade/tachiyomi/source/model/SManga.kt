@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.data.database.models.MangaImpl
 import eu.kanade.tachiyomi.source.online.utils.FollowStatus
 import eu.kanade.tachiyomi.source.online.utils.MdUtil
 import java.io.Serializable
+import org.nekomanga.constants.Constants.ALT_TITLES_SEPARATOR
 import tachiyomi.source.model.MangaInfo
 
 interface SManga : Serializable {
@@ -56,15 +57,14 @@ interface SManga : Serializable {
 
     var merge_manga_image_url: String?
 
+    var last_volume_number: Int?
+
     var last_chapter_number: Int?
 
     var alt_titles: String?
 
-    val originalTitle: String
-        get() = (this as? MangaImpl)?.ogTitle ?: title
-
     fun setAltTitles(altTitles: List<String>?) {
-        alt_titles = altTitles?.joinToString("|~|")
+        alt_titles = altTitles?.joinToString(ALT_TITLES_SEPARATOR)
     }
 
     fun copyFrom(other: SManga) {
@@ -119,13 +119,13 @@ interface SManga : Serializable {
             other_urls = other.other_urls
         }
 
-        if (other.last_chapter_number != null) {
-            last_chapter_number = other.last_chapter_number
-        }
-
         if (other.alt_titles != null) {
             alt_titles = other.alt_titles
         }
+
+        last_volume_number = other.last_volume_number
+
+        last_chapter_number = other.last_chapter_number
 
         missing_chapters = other.missing_chapters
 

@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.data.database.models
 
-import android.content.Context
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.external.Amazon
 import eu.kanade.tachiyomi.data.external.AniList
 import eu.kanade.tachiyomi.data.external.AnimePlanet
@@ -15,17 +13,21 @@ import eu.kanade.tachiyomi.data.external.Engtl
 import eu.kanade.tachiyomi.data.external.ExternalLink
 import eu.kanade.tachiyomi.data.external.Kitsu
 import eu.kanade.tachiyomi.data.external.Mal
+import eu.kanade.tachiyomi.data.external.MangaBakaLink
 import eu.kanade.tachiyomi.data.external.MangaUpdatesLink
 import eu.kanade.tachiyomi.data.external.Raw
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.utils.MdUtil
 import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
 import eu.kanade.tachiyomi.ui.reader.settings.ReadingModeType
+import eu.kanade.tachiyomi.util.manga.MangaMappings
 import eu.kanade.tachiyomi.util.system.toMangaCacheKey
 import java.util.Locale
-import org.nekomanga.R
+import org.nekomanga.constants.Constants.ALT_TITLES_SEPARATOR
+import org.nekomanga.data.database.repository.ChapterRepository
 import org.nekomanga.domain.details.MangaDetailsPreferences
-import tachiyomi.source.model.MangaInfo
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 interface Manga : SManga {
 
@@ -52,6 +54,12 @@ interface Manga : SManga {
     var user_cover: String?
 
     var user_title: String?
+
+    var dynamic_cover: String?
+
+    fun displayTitle(): String {
+        return user_title ?: title
+    }
 
     fun isBlank() = id == Long.MIN_VALUE
 
@@ -110,34 +118,18 @@ interface Manga : SManga {
         if (usesLocalFilter) hideChapterTitles
         else mangaDetailsPreferences.hideChapterTitlesByDefault().get()
 
-    fun showChapterTitle(defaultShow: Boolean): Boolean =
-        chapter_flags and CHAPTER_DISPLAY_MASK == CHAPTER_DISPLAY_NUMBER
-
-    fun seriesType(context: Context): String {
-        return context
-            .getString(
-                when (seriesType()) {
-                    TYPE_WEBTOON -> R.string.webtoon
-                    TYPE_MANHWA -> R.string.manhwa
-                    TYPE_MANHUA -> R.string.manhua
-                    TYPE_COMIC -> R.string.comic
-                    else -> R.string.manga
-                },
-            )
-            .lowercase(Locale.getDefault())
-    }
+    fun availableFilter(mangaDetailsPreferences: MangaDetailsPreferences): Int =
+        if (usesLocalFilter) availableFilter
+        else mangaDetailsPreferences.filterChapterByAvailable().get()
 
     fun getGenres(filterOutSafe: Boolean = false): List<String>? {
-        return genre
-            ?.split(",")
-            ?.mapNotNull { tag -> tag.trim().takeUnless { it.isBlank() } }
-            ?.filter {
-                if (filterOutSafe) {
-                    !it.equals("Content rating: safe", true)
-                } else {
-                    true
-                }
-            }
+        return genre?.split(",")?.mapNotNull { tag ->
+            val trimmed = tag.trim()
+            if (trimmed.isBlank()) return@mapNotNull null
+            if (filterOutSafe && trimmed.equals("Content rating: safe", true))
+                return@mapNotNull null
+            trimmed
+        }
     }
 
     fun getContentRating(): String? {
@@ -181,13 +173,19 @@ interface Manga : SManga {
         }
     }
 
-    fun isOneShotOrCompleted(db: DatabaseHelper): Boolean {
-        val tags by lazy { genre?.split(",")?.map { it.trim().lowercase(Locale.US) } }
-        val chapters by lazy { db.getChapters(this).executeAsBlocking() }
-        val firstChapterName by lazy { chapters.firstOrNull()?.name?.lowercase() ?: "" }
+    suspend fun isOneShotOrCompleted(
+        chapterRepository: ChapterRepository,
+        chapters: List<Chapter>? = null,
+    ): Boolean {
+        val mangaId = this@Manga.id ?: return false
+        val tags = genre?.split(",")?.map { it.trim().lowercase(Locale.US) }
+        val mangaChapters = chapters ?: chapterRepository.getChaptersForManga(mangaId)
+
+        val firstChapterName by lazy { mangaChapters.firstOrNull()?.name?.lowercase() ?: "" }
         return status == SManga.COMPLETED ||
             tags?.contains("oneshot") == true ||
-            (chapters.size == 1 &&
+            mangaChapters.any { it.name.contains("[END]", ignoreCase = true) } ||
+            (mangaChapters.size == 1 &&
                 (Regex("one.?shot").containsMatchIn(firstChapterName) ||
                     firstChapterName.contains("oneshot")))
     }
@@ -197,8 +195,10 @@ interface Manga : SManga {
     }
 
     fun getAltTitles(): List<String> {
-        return alt_titles?.split("|~|")?.filter { it.isNotBlank() }?.filter { it != originalTitle }
-            ?: emptyList()
+        return alt_titles
+            ?.split(ALT_TITLES_SEPARATOR)
+            ?.filter { it.isNotBlank() }
+            ?.filter { it != title } ?: emptyList()
     }
 
     fun getExternalLinks(): List<ExternalLink> {
@@ -215,6 +215,18 @@ interface Manga : SManga {
         manga_updates_id?.let { list.add(MangaUpdatesLink(it)) }
 
         my_anime_list_id?.let { list.add(Mal(it)) }
+
+        try {
+            val mappings: MangaMappings = Injekt.get()
+            val mangaDexId: String? =
+                list.filterIsInstance<Dex>().firstOrNull()?.id ?: MdUtil.getMangaUUID(url)
+            mangaDexId?.let { id -> mappings.getMbId(id)?.let { list.add(MangaBakaLink(it)) } }
+        } catch (e: IllegalStateException) {
+            // In case Injekt or MangaMappings is not available (e.g. in tests)
+            // TODO: Log the exception to aid debugging in production environments.
+            // e.printStackTrace() // For immediate debugging, consider a proper logger for
+            // production.
+        }
 
         other_urls?.let { combinedString ->
             combinedString.split("||").forEach { pairString ->
@@ -249,6 +261,10 @@ interface Manga : SManga {
     var bookmarkedFilter: Int
         get() = chapter_flags and CHAPTER_BOOKMARKED_MASK
         set(filter) = setChapterFlags(filter, CHAPTER_BOOKMARKED_MASK)
+
+    var availableFilter: Int
+        get() = chapter_flags and CHAPTER_UNAVAILABLE_MASK
+        set(filter) = setChapterFlags(filter, CHAPTER_UNAVAILABLE_MASK)
 
     var sorting: Int
         get() = chapter_flags and CHAPTER_SORTING_MASK
@@ -290,7 +306,7 @@ interface Manga : SManga {
         const val CHAPTER_BOOKMARKED_MASK = 0x00000060
 
         const val CHAPTER_SORTING_SOURCE = 0x00000000
-        const val CHAPTER_SORTING_NUMBER = 0x00000100
+        const val CHAPTER_SORTING_SMART = 0x00000100
         const val CHAPTER_SORTING_UPLOAD_DATE = 0x00000200
         const val CHAPTER_SORTING_MASK = 0x00000300
 
@@ -298,11 +314,13 @@ interface Manga : SManga {
         const val CHAPTER_DISPLAY_NUMBER = 0x00100000
         const val CHAPTER_DISPLAY_MASK = 0x00100000
 
+        const val CHAPTER_SHOW_UNAVAILABLE = 0x00200000
+        const val CHAPTER_SHOW_AVAILABLE = 0x00400000
+        const val CHAPTER_UNAVAILABLE_MASK = 0x00600000
+
         const val TYPE_MANGA = 1
         const val TYPE_MANHWA = 2
         const val TYPE_MANHUA = 3
-        const val TYPE_COMIC = 4
-        const val TYPE_WEBTOON = 5
 
         fun create(source: Long): Manga = MangaImpl().apply { this.source = source }
 
@@ -316,19 +334,6 @@ interface Manga : SManga {
 }
 
 fun Manga.isLongStrip() = this.genre?.contains("long strip", true) ?: false
-
-fun Manga.toMangaInfo(): MangaInfo {
-    return MangaInfo(
-        artist = this.artist ?: "",
-        author = this.author ?: "",
-        cover = this.thumbnail_url ?: "",
-        description = this.description ?: "",
-        genres = this.getGenres() ?: emptyList(),
-        key = this.url,
-        status = this.status,
-        title = this.title,
-    )
-}
 
 fun Manga.uuid(): String {
     return MdUtil.getMangaUUID(this.url)

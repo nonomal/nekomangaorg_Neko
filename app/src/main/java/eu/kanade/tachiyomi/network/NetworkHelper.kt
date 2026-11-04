@@ -1,15 +1,17 @@
 package eu.kanade.tachiyomi.network
 
 import android.content.Context
-import com.chuckerteam.chucker.api.ChuckerCollector
-import com.chuckerteam.chucker.api.ChuckerInterceptor
 import com.google.common.net.HttpHeaders
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.source.online.MangaDexLoginHelper
+import eu.kanade.tachiyomi.util.lang.isUUID
 import java.io.File
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.Json
 import okhttp3.Cache
+import okhttp3.Dispatcher
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import org.nekomanga.BuildConfig
@@ -17,10 +19,13 @@ import org.nekomanga.constants.Constants
 import org.nekomanga.constants.MdConstants
 import org.nekomanga.core.network.NetworkPreferences
 import org.nekomanga.core.network.interceptor.HeadersInterceptor
+import org.nekomanga.core.network.interceptor.PriorityRateLimitInterceptor
 import org.nekomanga.core.network.interceptor.UserAgentInterceptor
 import org.nekomanga.core.network.interceptor.authInterceptor
 import org.nekomanga.core.network.interceptor.loggingInterceptor
 import org.nekomanga.core.network.interceptor.rateLimit
+import org.nekomanga.domain.site.MangaDexPreferences
+import org.nekomanga.logging.TimberKt
 import tachiyomi.core.network.AndroidCookieJar
 import tachiyomi.core.network.PREF_DOH_360
 import tachiyomi.core.network.PREF_DOH_ADGUARD
@@ -46,41 +51,90 @@ import tachiyomi.core.network.dohNajalla
 import tachiyomi.core.network.dohQuad101
 import tachiyomi.core.network.dohQuad9
 import tachiyomi.core.network.dohShecan
+import tachiyomi.core.network.interceptors.CleartextPolicyInterceptor
 import tachiyomi.core.network.interceptors.CloudflareInterceptor
 import uy.kohesive.injekt.injectLazy
 
 class NetworkHelper(val context: Context) {
     private val networkPreferences: NetworkPreferences by injectLazy()
-    private val preferences: PreferencesHelper by injectLazy()
+
+    private val mangadexPreferences: MangaDexPreferences by injectLazy()
     private val json: Json by injectLazy()
     private val mangaDexLoginHelper: MangaDexLoginHelper by injectLazy()
 
-    private val cacheDir = File(context.cacheDir, "network_cache")
+    val cacheDir = File(context.cacheDir, "network_cache")
 
     private val cacheSize = 5L * 1024 * 1024 // 5 MiB
 
     val cookieManager = AndroidCookieJar()
 
+    private val sharedPriorityInterceptor =
+        PriorityRateLimitInterceptor(
+            permits = 5,
+            period = 1,
+            unit = TimeUnit.SECONDS,
+            prioritySelector = { url ->
+                val string = url.toString()
+                val isReaderChapter =
+                    url.pathSegments.isNotEmpty() &&
+                        url.pathSegments[0] == MdConstants.Api.chapter.substringAfterLast("/") &&
+                        string.substringAfterLast("/").isUUID()
+                val isHomePageOrSearch =
+                    url.pathSegments.size == 1 &&
+                        url.pathSegments[0] == MdConstants.Api.manga.substringAfterLast("/")
+
+                when {
+                    // High Priority (User Actions)
+                    isReaderChapter ||
+                        isHomePageOrSearch ||
+                        url.pathSegments.contains("chapter") ||
+                        url.pathSegments.contains("user") ||
+                        url.pathSegments.contains("list") ||
+                        url.pathSegments.contains("mangadex-seasonal") -> 10
+
+                    // Medium Priority
+                    url.host == "uploads.mangadex.org" -> 5
+
+                    // Low Priority (Background Jobs usually fall here)
+                    else -> 1
+                }
+            },
+        )
+
+    private fun createDispatcher(): Dispatcher {
+        val threadFactory = ThreadFactory { runnable ->
+            Thread(runnable, "OkHttp Dispatcher").apply {
+                isDaemon = false
+                setUncaughtExceptionHandler { thread, throwable ->
+                    TimberKt.e(throwable) {
+                        "Uncaught exception in OkHttp Dispatcher on ${thread.name}"
+                    }
+                }
+            }
+        }
+        val executorService =
+            ThreadPoolExecutor(
+                0,
+                Int.MAX_VALUE,
+                60,
+                TimeUnit.SECONDS,
+                SynchronousQueue(),
+                threadFactory,
+            )
+        return Dispatcher(executorService)
+    }
+
     private val baseClientBuilder: OkHttpClient.Builder
         get() {
             val builder =
                 OkHttpClient.Builder()
+                    .dispatcher(createDispatcher())
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .callTimeout(1, TimeUnit.MINUTES)
                     .cache(Cache(cacheDir, cacheSize))
                     .cookieJar(cookieManager)
                     .apply {
-                        if (BuildConfig.DEBUG) {
-                            addInterceptor(
-                                ChuckerInterceptor.Builder(context)
-                                    .collector(ChuckerCollector(context))
-                                    .maxContentLength(250000L)
-                                    .redactHeaders(emptySet())
-                                    .alwaysReadResponseBody(false)
-                                    .build(),
-                            )
-                        }
                         when (networkPreferences.dohProvider().get()) {
                             PREF_DOH_CLOUDFLARE -> dohCloudflare()
                             PREF_DOH_GOOGLE -> dohGoogle()
@@ -96,12 +150,20 @@ class NetworkHelper(val context: Context) {
                             PREF_DOH_SHECAN -> dohShecan()
                         }
                     }
+                    .addInterceptor(CleartextPolicyInterceptor())
             return builder
         }
 
-    private fun buildRateLimitedClient(): OkHttpClient {
+    private fun buildPriorityRateLimitedClient(): OkHttpClient {
+
+        val dispatcher =
+            createDispatcher().apply {
+                maxRequestsPerHost = 20
+                maxRequests = 30
+            }
         return baseClientBuilder
-            .rateLimit(permits = 300, period = 1, unit = TimeUnit.MINUTES)
+            .dispatcher(dispatcher) // Apply the wider dispatcher
+            .addInterceptor(sharedPriorityInterceptor) // Use the SINGLE shared instance
             .addInterceptor(loggingInterceptor({ networkPreferences.verboseLogging().get() }, json))
             .build()
     }
@@ -123,9 +185,9 @@ class NetworkHelper(val context: Context) {
     }
 
     private fun buildRateLimitedAuthenticatedClient(): OkHttpClient {
-        return buildRateLimitedClient()
+        return buildPriorityRateLimitedClient()
             .newBuilder()
-            .addNetworkInterceptor(authInterceptor { preferences.sessionToken().get() })
+            .addNetworkInterceptor(authInterceptor { mangadexPreferences.sessionToken().get() })
             .authenticator(MangaDexTokenAuthenticator(mangaDexLoginHelper))
             .addInterceptor(HeadersInterceptor(MdConstants.baseUrl))
             .addInterceptor(loggingInterceptor({ networkPreferences.verboseLogging().get() }, json))
@@ -142,7 +204,7 @@ class NetworkHelper(val context: Context) {
 
     val cloudFlareClient = buildCloudFlareClient()
 
-    val client = buildRateLimitedClient()
+    val client = buildPriorityRateLimitedClient()
 
     val mangadexClient =
         client
@@ -162,7 +224,7 @@ class NetworkHelper(val context: Context) {
             .apply {
                 add(
                     HttpHeaders.USER_AGENT,
-                    "Neko ${BuildConfig.VERSION_NAME}" + System.getProperty("http.agent")
+                    "Neko ${BuildConfig.VERSION_NAME}" + System.getProperty("http.agent"),
                 )
                 add(HttpHeaders.REFERER, MdConstants.baseUrl)
                 add(HttpHeaders.CONTENT_TYPE, "application/json")

@@ -1,9 +1,10 @@
 package eu.kanade.tachiyomi.util.system
 
-import android.annotation.SuppressLint
+import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -23,29 +24,24 @@ import androidx.annotation.ColorInt
 import androidx.annotation.ColorRes
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
+import androidx.core.content.res.use
 import androidx.core.net.toUri
 import androidx.work.CoroutineWorker
-import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.hippo.unifile.UniFile
-import com.mikepenz.iconics.IconicsDrawable
-import com.mikepenz.iconics.typeface.IIcon
-import com.mikepenz.iconics.utils.colorInt
-import com.mikepenz.iconics.utils.sizeDp
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.lang.orUnknownError
 import java.io.File
 import kotlin.math.max
 import org.nekomanga.R
 import org.nekomanga.constants.MdConstants
 import org.nekomanga.logging.TimberKt
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import org.nekomanga.presentation.components.UiText
 
 private const val TABLET_UI_MIN_SCREEN_WIDTH_DP = 720
 
@@ -67,6 +63,31 @@ fun Context.toast(@StringRes resource: Int, duration: Int = Toast.LENGTH_SHORT) 
  */
 fun Context.toast(text: String?, duration: Int = Toast.LENGTH_SHORT) {
     Toast.makeText(this, text.orEmpty(), duration).show()
+}
+
+/**
+ * Display a toast in this context.
+ *
+ * @param text the text to display.
+ * @param duration the duration of the toast. Defaults to short.
+ */
+fun Context.toast(text: UiText?, duration: Int = Toast.LENGTH_SHORT) {
+    val message =
+        when (text) {
+            null -> ""
+            is UiText.PluralsResource ->
+                this.resources.getQuantityString(text.resourceId, text.count, *text.args)
+            is UiText.String -> text.str
+            is UiText.StringResource -> {
+                if (text.args.isEmpty()) {
+                    this.resources.getString(text.resourceId)
+                } else {
+                    this.resources.getString(text.resourceId, *text.args)
+                }
+            }
+        }
+
+    Toast.makeText(this, message, duration).show()
 }
 
 /**
@@ -101,17 +122,11 @@ fun Context.hasPermission(permission: String) =
  */
 @ColorInt
 fun Context.getResourceColor(@AttrRes resource: Int): Int {
-    val typedArray = obtainStyledAttributes(intArrayOf(resource))
-    val attrValue = typedArray.getColor(0, 0)
-    typedArray.recycle()
-    return attrValue
+    return obtainStyledAttributes(intArrayOf(resource)).use { it.getColor(0, 0) }
 }
 
 fun Context.getResourceDrawable(@AttrRes resource: Int): Drawable? {
-    val typedArray = obtainStyledAttributes(intArrayOf(resource))
-    val attrValue = typedArray.getDrawable(0)
-    typedArray.recycle()
-    return attrValue
+    return obtainStyledAttributes(intArrayOf(resource)).use { it.getDrawable(0) }
 }
 
 /**
@@ -176,11 +191,7 @@ val displayMaxHeightInPx: Int
  */
 val Context.animatorDurationScale: Float
     get() =
-        Settings.Global.getFloat(
-            this.contentResolver,
-            Settings.Global.ANIMATOR_DURATION_SCALE,
-            1f,
-        )
+        Settings.Global.getFloat(this.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
 
 /**
  * Helper method to create a notification builder.
@@ -202,30 +213,8 @@ fun Context.notificationBuilder(
     return builder
 }
 
-fun Context.prepareSideNavContext(): Context {
-    val configuration = resources.configuration
-    val expected =
-        when (Injekt.get<PreferencesHelper>().sideNavMode().get()) {
-            SideNavMode.ALWAYS.prefValue -> true
-            SideNavMode.NEVER.prefValue -> false
-            else -> null
-        }
-    if (expected != null) {
-        val overrideConf = Configuration()
-        overrideConf.setTo(configuration)
-        overrideConf.screenWidthDp =
-            if (expected) {
-                overrideConf.screenWidthDp.coerceAtLeast(TABLET_UI_MIN_SCREEN_WIDTH_DP)
-            } else {
-                overrideConf.screenWidthDp.coerceAtMost(TABLET_UI_MIN_SCREEN_WIDTH_DP - 1)
-            }
-        return createConfigurationContext(overrideConf)
-    }
-    return this
-}
-
 fun Context.withOriginalWidth(): Context {
-    val width = (this as? MainActivity)?.ogWidth ?: resources.configuration.screenWidthDp
+    val width = resources.configuration.screenWidthDp
     val configuration = resources.configuration
     val overrideConf = Configuration()
     overrideConf.setTo(configuration)
@@ -280,12 +269,7 @@ fun Context.defaultBrowserPackageName(): String? {
 }
 
 fun Context.openInWebView(url: String, title: String = "") {
-    val intent =
-        WebViewActivity.newIntent(
-            this.applicationContext,
-            url,
-            title,
-        )
+    val intent = WebViewActivity.newIntent(this.applicationContext, url, title)
     startActivity(intent)
 }
 
@@ -300,7 +284,7 @@ fun Context.openInFirefox(url: String) {
             }
         startActivity(intent)
     } catch (e: Exception) {
-        toast(e.message)
+        toast(e.message.orUnknownError(this))
         openInBrowser(uri)
     }
 }
@@ -324,7 +308,7 @@ fun Context.openInBrowser(uri: Uri, forceDefaultBrowser: Boolean = false) {
             }
         startActivity(intent)
     } catch (e: Exception) {
-        toast(e.message)
+        toast(e.message.orUnknownError(this))
     }
 }
 
@@ -333,18 +317,71 @@ fun Context.isInNightMode(): Boolean {
     return currentNightMode == Configuration.UI_MODE_NIGHT_YES
 }
 
-suspend fun CoroutineWorker.tryToSetForeground() {
-    try {
-        setForeground(getForegroundInfo())
-    } catch (e: IllegalStateException) {
-        TimberKt.e(e) { "Not allowed to set foreground job" }
+fun Context.getActivity(): AppCompatActivity? {
+    var currentContext = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is AppCompatActivity) {
+            return currentContext
+        }
+        currentContext = currentContext.baseContext
+    }
+    return null
+}
+
+fun Context.isBackgroundDataRestricted(): Boolean {
+    val connectivityManager = getSystemService(ConnectivityManager::class.java)
+    return when (connectivityManager.restrictBackgroundStatus) {
+        // Data Saver is ON and this app is NOT whitelisted. Background jobs will fail.
+        ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED -> true
+        // Data Saver is ON, but the user explicitly exempted this app. Safe to proceed.
+        ConnectivityManager.RESTRICT_BACKGROUND_STATUS_WHITELISTED -> false
+        // Data Saver is completely OFF. Safe to proceed.
+        ConnectivityManager.RESTRICT_BACKGROUND_STATUS_DISABLED -> false
+        else -> false
     }
 }
 
-fun WorkManager.jobIsRunning(tag: String): Boolean =
-    getWorkInfosForUniqueWork(tag).get().let { list ->
-        list.count { it.state == WorkInfo.State.RUNNING } == 1
+fun Context.openDataSaverSettings() {
+    try {
+        val intent =
+            Intent(Settings.ACTION_IGNORE_BACKGROUND_DATA_RESTRICTIONS_SETTINGS).apply {
+                data = "package:$packageName".toUri()
+            }
+        startActivity(intent)
+    } catch (e: Exception) {
+        // Fallback to standard network settings if the device manufacturer
+        // heavily modified the Android OS and removed this specific screen.
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS))
     }
+}
+
+suspend fun CoroutineWorker.tryToSetForeground() {
+    try {
+        setForeground(getForegroundInfo())
+        TimberKt.i { "Successfully set foreground info" }
+    } catch (e: Exception) {
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                e is ForegroundServiceStartNotAllowedException
+        ) {
+            // On Android 12+, if the app is in the background, we are not allowed to
+            // start a foreground service. We swallow this exception so the worker
+            // continues execution as a standard background job (without a notification).
+            TimberKt.w {
+                "App in background; failed to promote to foreground service. Continuing as background worker."
+            }
+        } else {
+            // Log other errors (like IllegalStateException) but don't crash
+            TimberKt.e(e) { "Failed to set foreground job" }
+        }
+    }
+}
+
+suspend fun WorkManager.jobIsRunning(uniqueWorkName: String): Boolean = withIOContext {
+    getWorkInfosForUniqueWork(uniqueWorkName).get().let { list ->
+        list.any { !it.state.isFinished }
+    }
+}
 
 fun Context.appDelegateNightMode(): Int {
     return if (isInNightMode()) {
@@ -358,24 +395,18 @@ fun Context.isOnline(): Boolean {
     val networkCapabilities = connectivityManager.activeNetwork ?: return false
     val actNw = connectivityManager.getNetworkCapabilities(networkCapabilities) ?: return false
     val maxTransport =
-        when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 ->
-                NetworkCapabilities.TRANSPORT_LOWPAN
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ->
-                NetworkCapabilities.TRANSPORT_WIFI_AWARE
-            else -> NetworkCapabilities.TRANSPORT_VPN
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            NetworkCapabilities.TRANSPORT_LOWPAN
+        } else {
+            NetworkCapabilities.TRANSPORT_WIFI_AWARE
         }
     return (NetworkCapabilities.TRANSPORT_CELLULAR..maxTransport).any(actNw::hasTransport)
 }
 
 fun Context.launchRequestPackageInstallsPermission() {
     val intent =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                data = Uri.parse("package:$packageName")
-            }
-        } else {
-            Intent(Settings.ACTION_SECURITY_SETTINGS)
+        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+            data = Uri.parse("package:$packageName")
         }
     startActivity(intent)
 }
@@ -389,51 +420,8 @@ fun Context.createFileInCacheDir(name: String): File {
     return file
 }
 
-/**
- * Returns the color
- *
- * @param resource the attribute.
- */
-@SuppressLint("ResourceType")
-fun Context.iconicsDrawableLarge(
-    icon: IIcon,
-    size: Int = 24,
-    color: Int = R.attr.colorAccent,
-    attributeColor: Boolean = true,
-): IconicsDrawable {
-    return this.iconicsDrawable(icon, size, color, attributeColor)
-}
-
-/** default tinted to actionbar */
-@SuppressLint("ResourceType")
-fun Context.iconicsDrawableMedium(
-    icon: IIcon,
-    size: Int = 18,
-    color: Int = R.attr.actionBarTintColor,
-    attributeColor: Boolean = true,
-): IconicsDrawable {
-    return this.iconicsDrawable(icon, size, color, attributeColor)
-}
-
-@SuppressLint("ResourceType")
-fun Context.iconicsDrawable(
-    icon: IIcon,
-    size: Int = 15,
-    color: Int = R.attr.colorAccent,
-    attributeColor: Boolean = true,
-): IconicsDrawable {
-    return IconicsDrawable(this, icon).apply {
-        sizeDp = size
-        colorInt =
-            when {
-                attributeColor -> getResourceColor(color)
-                else -> contextCompatColor(color)
-            }
-    }
-}
-
 fun Context.sharedCacheDir(): UniFile? {
     val uniFile = UniFile.fromFile(this.cacheDir)?.createDirectory("shared_image")
-    uniFile?.listFiles()?.filter { it.isFile }?.map { it.delete() }
+    uniFile?.listFiles()?.forEach { if (it.isFile) it.delete() }
     return uniFile
 }

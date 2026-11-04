@@ -1,15 +1,26 @@
 package eu.kanade.tachiyomi.util.chapter
 
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
+import androidx.room.withTransaction
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.isLocalSource
 import eu.kanade.tachiyomi.source.model.isMergedChapter
+import eu.kanade.tachiyomi.source.online.handlers.StatusHandler
 import eu.kanade.tachiyomi.source.online.utils.MdUtil
+import eu.kanade.tachiyomi.util.lang.isUUID
 import java.util.Date
 import java.util.TreeSet
+import org.nekomanga.constants.Constants
+import org.nekomanga.constants.MdConstants
+import org.nekomanga.data.database.AppDatabase
+import org.nekomanga.data.database.repository.ChapterRepository
+import org.nekomanga.data.database.repository.MangaRepository
+import org.nekomanga.domain.library.LibraryPreferences
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.TimberKt
+import tachiyomi.core.util.storage.DiskUtil
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -19,106 +30,285 @@ import uy.kohesive.injekt.api.get
  * @param db the database.
  * @param rawSourceChapters a list of chapters from the source.
  * @param manga the manga of the chapters.
- * @param source the source of the chapters.
+ * @param errorFromMerged whether there is an error is from a merged source
+ * @param readFromMerged a set of merged chapters that have a read status
  * @return a pair of new insertions and deletions.
  */
-fun syncChaptersWithSource(
-    db: DatabaseHelper,
+suspend fun syncChaptersWithSource(
+    appDatabase: AppDatabase,
+    chapterRepository: ChapterRepository,
+    mangaRepository: MangaRepository,
     rawSourceChapters: List<SChapter>,
     manga: Manga,
     errorFromMerged: Boolean = false,
+    readFromMerged: Set<String> = emptySet(),
 ): Pair<List<Chapter>, List<Chapter>> {
     val downloadManager: DownloadManager = Injekt.get()
-    // Chapters from db.
-    val dbChapters = db.getChapters(manga).executeAsBlocking()
-    // no need to handle cache in dedupe because rawsource already has the correct chapters
-    val sortedChapters = reorderChapters(rawSourceChapters, manga)
+    val libraryPreferences: LibraryPreferences = Injekt.get()
+    val mangaDexPreferences: MangaDexPreferences = Injekt.get()
 
-    val sourceChapters =
-        sortedChapters.mapIndexed { i, sChapter ->
-            Chapter.create().apply {
-                copyFrom(sChapter)
-                TimberKt.d {
-                    "ChapterSourceSync ${this.scanlator} ${this.chapter_txt} sourceOrder=${i}"
+    // Chapters from db.
+    val mangaId = manga.id!!
+    var dbChapters = chapterRepository.getChaptersForManga(mangaId)
+
+    // Dedup unavailable with local prefix
+    val chapterUUIDs =
+        dbChapters
+            .filterNot { it.isLocalSource() || it.isMergedChapter() }
+            .map { MdUtil.getChapterUUID(it.url) }
+            .toHashSet()
+    val otherMangaLocalUuids =
+        otherMangaChapterUuids(
+            dbChapters
+                .filter { it.isLocalSource() }
+                .mapNotNull { chapterUuid(it.name) }
+                .filterNot { it in chapterUUIDs },
+            mangaId,
+            chapterRepository,
+        )
+    dbChapters = dbChapters.mapNotNull { dbChapter ->
+        val uuid = if (dbChapter.isLocalSource()) chapterUuid(dbChapter.name) else null
+        if (uuid != null && (uuid in chapterUUIDs || uuid in otherMangaLocalUuids)) {
+            chapterRepository.deleteChapter(dbChapter)
+            return@mapNotNull null
+        }
+        dbChapter
+    }
+
+    val localChapterLookupEnabled = libraryPreferences.enableLocalChapters().get()
+    var finalRawSourceChapters = rawSourceChapters
+
+    // Check for local chapter to add
+    if (localChapterLookupEnabled) {
+
+        TimberKt.d { "local chapter enabled, checking for orphans" }
+
+        val allDownloadsMap =
+            downloadManager.getAllDownloads(manga).associateBy { it.name }.toMutableMap()
+
+        if (allDownloadsMap.isNotEmpty()) {
+            dbChapters.forEach { dbChapter ->
+                if (allDownloadsMap.isNotEmpty()) {
+                    if (
+                        (!dbChapter.isLocalSource() &&
+                            downloadManager.isChapterDownloaded(dbChapter, manga)) ||
+                            (dbChapter.isLocalSource() &&
+                                downloadManager.isChapterDownloaded(dbChapter, manga, true))
+                    ) { // Don't re-add the chapter if it's already in the db
+                        val validName =
+                            downloadManager.downloadedChapterName(dbChapter).firstOrNull {
+                                it in allDownloadsMap
+                            }
+                        if (validName != null) {
+                            allDownloadsMap.remove(validName)
+                        }
+                    } else if (dbChapter.isLocalSource()) { // means its not downloaded currently
+                        chapterRepository.deleteChapter(dbChapter)
+                    }
                 }
-                manga_id = manga.id
-                source_order = i
             }
         }
+
+        val allDownloads = allDownloadsMap.values.toList()
+
+        finalRawSourceChapters =
+            if (allDownloads.isNotEmpty()) {
+                val otherMangaUuids =
+                    otherMangaChapterUuids(
+                        allDownloads
+                            .mapNotNull { file -> file.name?.let { chapterUuid(it) } }
+                            .filterNot { it in chapterUUIDs },
+                        mangaId,
+                        chapterRepository,
+                    )
+                val localSourceChapters =
+                    allDownloads
+                        .mapNotNull { file ->
+                            val fileName = file.name ?: return@mapNotNull null
+                            val uuid = chapterUuid(fileName)
+                            if (uuid != null && (uuid in chapterUUIDs || uuid in otherMangaUuids)) {
+                                if (fileName.startsWith("${Constants.LOCAL_SOURCE}_")) {
+                                    file.renameTo(
+                                        fileName.removePrefix("${Constants.LOCAL_SOURCE}_")
+                                    )
+                                }
+                                return@mapNotNull null
+                            }
+                            val chapterName =
+                                fileName
+                                    .substringBeforeLast('.')
+                                    .substringAfter("${Constants.LOCAL_SOURCE}_")
+                            val dateUploaded = file.lastModified()
+                            val fileNameSuffix =
+                                fileName.substringAfter("${Constants.LOCAL_SOURCE}_")
+                            val expectedFileName =
+                                DiskUtil.buildValidFilename(
+                                    "${Constants.LOCAL_SOURCE}_${fileNameSuffix}"
+                                )
+                            if (fileName != expectedFileName) {
+                                file.renameTo(expectedFileName)
+                            }
+
+                            SChapter.create().apply {
+                                url = "${Constants.LOCAL_SOURCE}/$file"
+                                name = chapterName
+                                chapter_txt = chapterName
+                                vol =
+                                    if (chapterName[0].isDigit()) ""
+                                    else chapterName.removePrefix("Vol.").takeWhile { it.isDigit() }
+                                scanlator = Constants.LOCAL_SOURCE
+                                date_upload = dateUploaded
+                                isUnavailable = true
+                            }
+                        }
+                        .sortedWith(
+                            compareByDescending<SChapter> { getChapterNum(it) == null }
+                                .thenByDescending { getChapterNum(it) }
+                        )
+                downloadManager.refreshCache()
+                listOf(rawSourceChapters, localSourceChapters)
+                    .mergeSorted(
+                        compareBy<SChapter> { getChapterNum(it) != null }
+                            .thenBy { getChapterNum(it) }
+                    )
+            } else {
+                val localSourceChapters =
+                    dbChapters
+                        .filter {
+                            it.isLocalSource() && downloadManager.isChapterDownloaded(it, manga)
+                        }
+                        .sortedWith(
+                            compareByDescending<Chapter> { getChapterNum(it) == null }
+                                .thenByDescending { getChapterNum(it) }
+                        )
+                        .map { dbChapter -> SChapter.create().apply { copyFrom(dbChapter) } }
+                listOf(rawSourceChapters, localSourceChapters)
+                    .mergeSorted(
+                        compareBy<SChapter> { getChapterNum(it) != null }
+                            .thenBy { getChapterNum(it) }
+                    )
+            }
+    }
+
+    val sourceChapters = finalRawSourceChapters.mapIndexed { i, sChapter ->
+        Chapter.create().apply {
+            copyFrom(sChapter)
+            manga_id = manga.id
+            source_order = i
+        }
+    }
+
+    dbChapters = chapterRepository.getChaptersForManga(manga.id!!)
+    val dbChaptersByUrl = dbChapters.associateBy { it.url }
+    val sourceChaptersByUrl = sourceChapters.associateBy { it.url }
+
+    // If merged source had an error, we need to get them from the db so the smart order is kept
+    val allChapters = sourceChapters.toMutableList()
+    if (errorFromMerged)
+        allChapters += dbChapters.filter { it.isMergedChapter() && it.url !in sourceChaptersByUrl }
+    val sortedChapters = reorderChapters(allChapters)
+    val (mergeErrorDbChapters, finalChapters) =
+        sortedChapters
+            .mapIndexed { i, chapter ->
+                Chapter.create().apply {
+                    copyFrom(chapter)
+                    TimberKt.d {
+                        "ChapterSourceSync ${this.scanlator} ${this.chapter_txt} sourceOrder=${this.source_order} smartOrder=${i}"
+                    }
+                    smart_order = i
+                }
+            }
+            .partition { errorFromMerged && it.isMergedChapter() && it.url !in sourceChaptersByUrl }
 
     // Chapters from the source not in db.
     val toAdd = mutableListOf<Chapter>()
 
     // Chapters whose metadata have changed.
-    val toChange = mutableListOf<Chapter>()
-
-    for (sourceChapter in sourceChapters) {
-        val dbChapter =
-            dbChapters.find {
-                if (sourceChapter.isMergedChapter() && it.isMergedChapter()) {
-                    it.url == sourceChapter.url
-                } else if (!sourceChapter.isMergedChapter() && !it.isMergedChapter()) {
-                    (it.mangadex_chapter_id.isNotBlank() &&
-                        it.mangadex_chapter_id == sourceChapter.mangadex_chapter_id) ||
-                        MdUtil.getChapterUUID(it.url) == sourceChapter.mangadex_chapter_id
-                } else {
-                    false
-                }
+    // This includes the smart order changes when there is a merged source error.
+    val toChange =
+        mergeErrorDbChapters
+            .map { chapter ->
+                val dbChapter = dbChaptersByUrl[chapter.url]!!
+                dbChapter.smart_order = chapter.smart_order
+                dbChapter
             }
+            .toMutableList()
+
+    // Read chapters to push to  remote hosted source.
+    val toSync = mutableListOf<Chapter>()
+
+    for (sourceChapter in finalChapters) {
+        val dbChapter = dbChaptersByUrl[sourceChapter.url]
 
         // Add the chapter if not in db already, or update if the metadata changed.
 
         if (dbChapter == null) {
-            toAdd.add(sourceChapter)
+            val chapter = sourceChapter.apply { if (this.url in readFromMerged) this.read = true }
+            toAdd.add(chapter)
         } else {
             ChapterRecognition.parseChapterNumber(sourceChapter, manga)
-
-            if (shouldUpdateDbChapter(dbChapter, sourceChapter)) {
+            val isMergedRead = sourceChapter.url in readFromMerged
+            if (
+                shouldUpdateDbChapter(dbChapter, sourceChapter) || (!dbChapter.read && isMergedRead)
+            ) {
                 if (
                     dbChapter.name != sourceChapter.name &&
-                        downloadManager.isChapterDownloaded(
-                            dbChapter,
-                            manga,
-                        )
+                        downloadManager.isChapterDownloaded(dbChapter, manga)
                 ) {
                     downloadManager.renameChapter(manga, dbChapter, sourceChapter)
                 }
                 dbChapter.scanlator = sourceChapter.scanlator
+                dbChapter.uploader = sourceChapter.uploader
                 dbChapter.name = sourceChapter.name
                 dbChapter.vol = sourceChapter.vol
                 dbChapter.chapter_txt = sourceChapter.chapter_txt
                 dbChapter.chapter_title = sourceChapter.chapter_title
-                dbChapter.date_upload = sourceChapter.date_upload
+                if (sourceChapter.date_upload != 0L) {
+                    dbChapter.date_upload = sourceChapter.date_upload
+                }
                 dbChapter.chapter_number = sourceChapter.chapter_number
                 dbChapter.mangadex_chapter_id = sourceChapter.mangadex_chapter_id
                 dbChapter.language = sourceChapter.language
+                dbChapter.isUnavailable = sourceChapter.isUnavailable
                 dbChapter.source_order = sourceChapter.source_order
+                dbChapter.smart_order = sourceChapter.smart_order
+                if (isMergedRead) dbChapter.read = true
                 toChange.add(dbChapter)
             }
+            if (!isMergedRead && dbChapter.read) {
+                toSync.add(dbChapter)
+            }
         }
+    }
+    if (mangaDexPreferences.readingSync().get()) {
+        Injekt.get<StatusHandler>().markMergedChaptersStatus(toSync, true)
     }
 
     // Recognize number for new chapters.
     toAdd.forEach { ChapterRecognition.parseChapterNumber(it, manga) }
 
     // Chapters from the db not in the source.
-    var toDelete =
-        dbChapters.filterNot { dbChapter ->
-            // ignore to delete when there is a site error
-            if (dbChapter.isMergedChapter() && errorFromMerged) {
-                true
-            } else {
-                sourceChapters.any { sourceChapter ->
-                    dbChapter.mangadex_chapter_id == sourceChapter.mangadex_chapter_id
-                }
-            }
+    var toDelete = dbChapters.filterNot { dbChapter ->
+        // ignore to delete when there is a site error
+        if (dbChapter.isMergedChapter() && errorFromMerged) {
+            true
+        } else if (dbChapter.isLocalSource()) {
+            downloadManager.isChapterDownloaded(dbChapter, manga, true)
+        } else {
+            sourceChaptersByUrl[dbChapter.url] != null
         }
+    }
 
     val dupes =
         dbChapters
             .groupBy { it.url }
-            .filter { entry -> entry.value.size > 1 }
-            .map { entry -> entry.value.firstOrNull { !it.read } ?: entry.value.first() }
+            .mapNotNull { entry ->
+                if (entry.value.size > 1) {
+                    entry.value.firstOrNull { !it.read } ?: entry.value.first()
+                } else {
+                    null
+                }
+            }
             .toMutableList()
     if (dupes.isNotEmpty()) {
         dupes.addAll(toDelete)
@@ -138,19 +328,19 @@ fun syncChaptersWithSource(
             }
             delta /= topChapters.size - 1
             manga.next_update = newestDate + delta
-            db.updateNextUpdated(manga).executeAsBlocking()
+            mangaRepository.updateNextUpdated(manga.id!!, newestDate + delta)
         }
 
         if (newestDate != 0L && newestDate != manga.last_update) {
             manga.last_update = newestDate
-            db.updateLastUpdated(manga).executeAsBlocking()
+            mangaRepository.updateLastUpdated(manga.id!!, newestDate)
         }
         return Pair(emptyList(), emptyList())
     }
 
     val readded = mutableListOf<Chapter>()
 
-    db.inTransaction {
+    appDatabase.withTransaction {
         val deletedChapterNumbers = TreeSet<Float>()
         val deletedReadChapterNumbers = TreeSet<Float>()
         if (toDelete.isNotEmpty()) {
@@ -160,7 +350,7 @@ fun syncChaptersWithSource(
                 }
                 deletedChapterNumbers.add(c.chapter_number)
             }
-            db.deleteChapters(toDelete).executeAsBlocking()
+            chapterRepository.deleteChapters(toDelete)
         }
 
         if (toAdd.isNotEmpty()) {
@@ -185,17 +375,18 @@ fun syncChaptersWithSource(
                     readded.add(chapter)
                 }
             }
-            val chapters = db.insertChapters(toAdd).executeAsBlocking()
-            toAdd.forEach { chapter ->
-                chapter.id = chapters.results().getValue(chapter).insertedId()
-            }
+            val chapterIds = chapterRepository.insertChapters(toAdd)
+            toAdd.forEachIndexed { index, chapter -> chapter.id = chapterIds[index] }
         }
 
         if (toChange.isNotEmpty()) {
-            db.insertChapters(toChange).executeAsBlocking()
+            chapterRepository.updateChapters(toChange)
         }
         val topChapters =
-            db.getChapters(manga).executeAsBlocking().sortedByDescending { it.date_upload }.take(4)
+            chapterRepository
+                .getChaptersForManga(manga.id!!)
+                .sortedByDescending { it.date_upload }
+                .take(4)
         // Recalculate next update since chapters were changed
         if (topChapters.size > 1) {
             var delta = 0L
@@ -204,7 +395,7 @@ fun syncChaptersWithSource(
             }
             delta /= topChapters.size - 1
             manga.next_update = topChapters[0].date_upload + delta
-            db.updateNextUpdated(manga).executeAsBlocking()
+            mangaRepository.updateNextUpdated(manga.id!!, topChapters[0].date_upload + delta)
         }
 
         // Set this manga as updated since chapters were changed
@@ -217,21 +408,54 @@ fun syncChaptersWithSource(
         } else {
             manga.last_update = dateFetch
         }
-        db.updateLastUpdated(manga).executeAsBlocking()
+        mangaRepository.updateLastUpdated(manga.id!!, manga.last_update)
     }
-    return Pair(toAdd.subtract(readded.toSet()).toList(), toDelete - readded.toSet())
+    val newChapters = toAdd.subtract(readded.toSet()).toList().filter { !it.isUnavailable }
+
+    return Pair(newChapters, toDelete - readded.toSet())
+}
+
+/** The MangaDex chapter uuid a download or local chapter name ends with, or null if it has none. */
+internal fun chapterUuid(name: String): String? =
+    name.removeSuffix(".cbz").substringAfterLast(" - ", "").trim().takeIf { it.isUUID() }
+
+/**
+ * Manga with the same title share one download folder, so a file in it can belong to a different
+ * manga. Returns the uuids in [uuids] whose chapter the database stores under another manga.
+ */
+internal suspend fun otherMangaChapterUuids(
+    uuids: Collection<String>,
+    mangaId: Long,
+    chapterRepository: ChapterRepository,
+): Set<String> {
+    if (uuids.isEmpty()) return emptySet()
+    return chapterRepository
+        .getChaptersByUrls(uuids.map { MdConstants.chapterSuffix + it })
+        .filter { it.manga_id != mangaId }
+        .mapTo(HashSet()) { MdUtil.getChapterUUID(it.url) }
+}
+
+private fun bothMerged(dbChapter: Chapter, sourceChapter: Chapter): Boolean {
+    return dbChapter.isMergedChapter() && sourceChapter.isMergedChapter()
+}
+
+private fun bothLocal(dbChapter: Chapter, sourceChapter: Chapter): Boolean {
+    return dbChapter.isLocalSource() && sourceChapter.isLocalSource()
 }
 
 // checks if the chapter in db needs updated
 private fun shouldUpdateDbChapter(dbChapter: Chapter, sourceChapter: Chapter): Boolean {
     return dbChapter.scanlator != sourceChapter.scanlator ||
+        dbChapter.uploader != sourceChapter.uploader ||
         dbChapter.name != sourceChapter.name ||
-        dbChapter.date_upload != sourceChapter.date_upload ||
+        (dbChapter.date_upload != sourceChapter.date_upload && sourceChapter.date_upload != 0L) ||
         dbChapter.chapter_number != sourceChapter.chapter_number ||
         dbChapter.vol != sourceChapter.vol ||
         dbChapter.chapter_title != sourceChapter.chapter_title ||
         dbChapter.chapter_txt != sourceChapter.chapter_txt ||
         dbChapter.mangadex_chapter_id != sourceChapter.mangadex_chapter_id ||
         dbChapter.language != sourceChapter.language ||
-        dbChapter.source_order != sourceChapter.source_order
+        dbChapter.isUnavailable != sourceChapter.isUnavailable ||
+        dbChapter.source_order != sourceChapter.source_order ||
+        dbChapter.smart_order != sourceChapter.smart_order
 }

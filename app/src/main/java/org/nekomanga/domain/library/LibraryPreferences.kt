@@ -1,10 +1,23 @@
 package org.nekomanga.domain.library
 
-import eu.kanade.tachiyomi.ui.library.LibraryItem
-import eu.kanade.tachiyomi.ui.library.filter.FilterBottomSheet
+import org.nekomanga.presentation.screens.library.LibraryDisplayMode
+import org.nekomanga.presentation.screens.library.LibraryGroup
+import org.nekomanga.presentation.screens.library.filter.FilterBookmarked
+import org.nekomanga.presentation.screens.library.filter.FilterCompleted
+import org.nekomanga.presentation.screens.library.filter.FilterDownloaded
+import org.nekomanga.presentation.screens.library.filter.FilterMangaType
+import org.nekomanga.presentation.screens.library.filter.FilterMerged
+import org.nekomanga.presentation.screens.library.filter.FilterMissingChapters
+import org.nekomanga.presentation.screens.library.filter.FilterTracked
+import org.nekomanga.presentation.screens.library.filter.FilterUnavailable
+import org.nekomanga.presentation.screens.library.filter.FilterUnread
 import tachiyomi.core.preference.PreferenceStore
 
 class LibraryPreferences(private val preferenceStore: PreferenceStore) {
+
+    fun defaultCategory() = this.preferenceStore.getInt("default_category", -1)
+
+    fun enableLocalChapters() = this.preferenceStore.getBoolean("enable_local_chapters", true)
 
     fun searchSuggestions() = this.preferenceStore.getString("library_search_suggestion")
 
@@ -12,12 +25,24 @@ class LibraryPreferences(private val preferenceStore: PreferenceStore) {
 
     fun lastSearchSuggestion() = this.preferenceStore.getLong("last_library_suggestion")
 
+    fun libraryRecentSearches() = this.preferenceStore.getString("library_recent_searches", "")
+
     fun updateInterval() = this.preferenceStore.getInt("pref_library_update_interval_key", 24)
 
     fun lastUpdateTimestamp() = this.preferenceStore.getLong("library_update_last_timestamp")
 
+    fun lastUpdateAttemptTimestamp() =
+        this.preferenceStore.getLong("library_update_last_attempt_timestamp")
+
+    fun lastUpdateDuration() = this.preferenceStore.getString("library_update_duration")
+
+    fun libraryUpdateIds() = this.preferenceStore.getString("library_update_ids")
+
     fun autoUpdateDeviceRestrictions() =
-        this.preferenceStore.getStringSet("library_update_restriction")
+        preferenceStore.getStringSet(
+            "library_update_restriction",
+            setOf(DEVICE_NETWORK_NOT_METERED),
+        )
 
     fun autoUpdateMangaRestrictions() =
         this.preferenceStore.getStringSet(
@@ -38,12 +63,12 @@ class LibraryPreferences(private val preferenceStore: PreferenceStore) {
     fun whichCategoriesToExclude() =
         this.preferenceStore.getStringSet("library_update_categories_exclude")
 
-    fun updatePrioritization() = this.preferenceStore.getInt("library_update_prioritization")
-
     fun layout() =
-        this.preferenceStore.getInt(
-            "pref_display_library_layout",
-            LibraryItem.LAYOUT_COMFORTABLE_GRID
+        this.preferenceStore.getObjectFromInt(
+            key = "pref_display_library_layout",
+            defaultValue = LibraryDisplayMode.ComfortableGrid,
+            serializer = { it.toInt() },
+            deserializer = { i -> LibraryDisplayMode.fromInt(i) },
         )
 
     fun sortingMode() = this.preferenceStore.getInt("library_sorting_mode")
@@ -60,6 +85,13 @@ class LibraryPreferences(private val preferenceStore: PreferenceStore) {
 
     fun unreadBadgeType() = this.preferenceStore.getInt("unread_badge_type", 2)
 
+    fun showUnreadBadge() = this.preferenceStore.getBoolean("display_unread_badge", true)
+
+    fun libraryHorizontalCategories() =
+        this.preferenceStore.getBoolean("library_horizontal_categories", false)
+
+    fun showLibraryButtonBar() = this.preferenceStore.getBoolean("show_library_button_bar", true)
+
     fun showCategoriesHeaderCount() = this.preferenceStore.getBoolean("display_number_of_items")
 
     fun showAllCategories() = this.preferenceStore.getBoolean("show_all_categories", true)
@@ -71,20 +103,23 @@ class LibraryPreferences(private val preferenceStore: PreferenceStore) {
 
     fun hopperGravity() = this.preferenceStore.getInt("hopper_gravity", 1)
 
-    fun filterOrder() =
-        this.preferenceStore.getString("filter_order", FilterBottomSheet.Filters.DEFAULT_ORDER)
-
     fun hopperLongPressAction() = this.preferenceStore.getInt("hopper_long_press")
 
     fun hideHopper() = this.preferenceStore.getBoolean("hide_hopper")
 
     fun autoHideHopper() = this.preferenceStore.getBoolean("autohide_hopper", true)
 
-    fun groupBy() = this.preferenceStore.getInt("group_library_by")
+    fun groupBy() =
+        this.preferenceStore.getObjectFromInt(
+            key = "group_library_by",
+            defaultValue = LibraryGroup.ByCategory,
+            serializer = LibraryGroup::type,
+            deserializer = LibraryGroup::fromInt,
+        )
 
-    fun showCategoryInTitle() = this.preferenceStore.getBoolean("category_in_title")
+    fun skipMangaMetadataDuringUpdate() = this.preferenceStore.getBoolean("faster_library_updates")
 
-    fun updateFaster() = this.preferenceStore.getBoolean("faster_library_updates")
+    fun prioritizeLibraryUpdates() = this.preferenceStore.getBoolean("prioritize_library_updates")
 
     fun updateCovers() = this.preferenceStore.getBoolean("refresh_covers_too", true)
 
@@ -96,34 +131,91 @@ class LibraryPreferences(private val preferenceStore: PreferenceStore) {
 
     fun staggeredGrid() = this.preferenceStore.getBoolean("use_staggered_grid")
 
-    fun hideStartReadingButton() = this.preferenceStore.getBoolean("hide_reading_button")
+    fun showStartReadingButton() = this.preferenceStore.getBoolean("start_reading_button", true)
 
     fun showDownloadBadge() = this.preferenceStore.getBoolean("display_download_badge")
 
-    fun filterDownloaded() = this.preferenceStore.getInt("pref_filter_downloaded_key")
+    fun filterDownloaded() =
+        this.preferenceStore.getObjectFromInt(
+            key = "pref_filter_downloaded_key",
+            defaultValue = FilterDownloaded.Inactive,
+            serializer = FilterDownloaded::toInt,
+            deserializer = FilterDownloaded::fromInt,
+        )
 
-    fun filterUnread() = this.preferenceStore.getInt("pref_filter_unread_key")
+    fun filterUnread() =
+        this.preferenceStore.getObjectFromInt(
+            key = "pref_filter_unread_key",
+            defaultValue = FilterUnread.Inactive,
+            serializer = FilterUnread::toInt,
+            deserializer = FilterUnread::fromInt,
+        )
 
-    fun filterCompleted() = this.preferenceStore.getInt("pref_filter_completed_key")
+    fun filterCompleted() =
+        this.preferenceStore.getObjectFromInt(
+            key = "pref_filter_completed_key",
+            defaultValue = FilterCompleted.Inactive,
+            serializer = FilterCompleted::toInt,
+            deserializer = FilterCompleted::fromInt,
+        )
 
-    fun filterBookmarked() = this.preferenceStore.getInt("pref_filter_bookmarked_key")
+    fun filterBookmarked() =
+        this.preferenceStore.getObjectFromInt(
+            key = "pref_filter_bookmarked_key",
+            defaultValue = FilterBookmarked.Inactive,
+            serializer = FilterBookmarked::toInt,
+            deserializer = FilterBookmarked::fromInt,
+        )
 
-    fun filterTracked() = this.preferenceStore.getInt("pref_filter_tracked_key")
+    fun filterUnavailable() =
+        this.preferenceStore.getObjectFromInt(
+            "pref_filter_unavailable_key",
+            defaultValue = FilterUnavailable.Inactive,
+            serializer = FilterUnavailable::toInt,
+            deserializer = FilterUnavailable::fromInt,
+        )
 
-    fun filterMangaType() = this.preferenceStore.getInt("pref_filter_manga_type_key")
+    fun filterTracked() =
+        this.preferenceStore.getObjectFromInt(
+            "pref_filter_tracked_key",
+            defaultValue = FilterTracked.Inactive,
+            serializer = FilterTracked::toInt,
+            deserializer = FilterTracked::fromInt,
+        )
 
-    fun filterMerged() = this.preferenceStore.getInt("pref_filter_merged_key")
+    fun filterMangaType() =
+        this.preferenceStore.getObjectFromInt(
+            "pref_filter_manga_type_key",
+            defaultValue = FilterMangaType.Inactive,
+            serializer = FilterMangaType::toInt,
+            deserializer = FilterMangaType::fromInt,
+        )
 
-    fun filterMissingChapters() = this.preferenceStore.getInt("pref_filter_missing_chapters_key")
+    fun filterMerged() =
+        this.preferenceStore.getObjectFromInt(
+            "pref_filter_merged_key",
+            defaultValue = FilterMerged.Inactive,
+            serializer = FilterMerged::toInt,
+            deserializer = FilterMerged::fromInt,
+        )
 
-    fun showEmptyCategoriesWhileFiltering() =
-        this.preferenceStore.getBoolean("show_empty_categories_filtering")
-
-    fun defaultMangaOrder() = this.preferenceStore.getString("default_manga_order")
+    fun filterMissingChapters() =
+        this.preferenceStore.getObjectFromInt(
+            "pref_filter_missing_chapters_key",
+            defaultValue = FilterMissingChapters.Inactive,
+            serializer = FilterMissingChapters::toInt,
+            deserializer = FilterMissingChapters::fromInt,
+        )
 
     fun removeArticles() = this.preferenceStore.getBoolean("remove_articles")
 
-    fun whatToUpdateOnRefresh() = this.preferenceStore.getInt("update_on_refresh", -1)
+    fun chapterScanlatorFilterOption() =
+        this.preferenceStore.getObjectFromInt(
+            key = "chapter_scanlator_filter_option",
+            defaultValue = ScanlatorFilterOption.ANY,
+            serializer = { it.value },
+            deserializer = { i -> ScanlatorFilterOption.fromInt(i) },
+        )
 
     companion object {
 
@@ -136,8 +228,7 @@ class LibraryPreferences(private val preferenceStore: PreferenceStore) {
         const val MANGA_TRACKING_PLAN_TO_READ = "manga_tracking_plan_to_read"
 
         // Device
-        const val DEVICE_ONLY_ON_WIFI = "wifi"
+        const val DEVICE_NETWORK_NOT_METERED = "network_not_metered"
         const val DEVICE_CHARGING = "ac"
-        const val DEVICE_BATTERY_NOT_LOW = "battery_not_low"
     }
 }

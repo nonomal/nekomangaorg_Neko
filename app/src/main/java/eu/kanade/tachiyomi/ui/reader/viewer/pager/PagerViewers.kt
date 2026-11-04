@@ -1,37 +1,93 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.reader.model.ChapterNavTarget
+import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
+import eu.kanade.tachiyomi.ui.reader.model.ReaderUiItem
 
 /** Implementation of a left to right PagerViewer. */
-class L2RPagerViewer(activity: ReaderActivity) : PagerViewer(activity) {
-    /** Creates a new left to right pager. */
-    override fun createPager(): Pager {
-        return Pager(activity)
-    }
-}
+@Deprecated("Use ComposePagerViewer with ReaderViewModel and ReaderNavCommand instead")
+class L2RPagerViewer(activity: ReaderActivity) : PagerViewer(activity)
 
 /** Implementation of a right to left PagerViewer. */
+@Deprecated("Use ComposePagerViewer with ReaderViewModel and ReaderNavCommand instead")
 class R2LPagerViewer(activity: ReaderActivity) : PagerViewer(activity) {
-    /** Creates a new right to left pager. */
-    override fun createPager(): Pager {
-        return Pager(activity)
-    }
+    override val isRtl: Boolean
+        get() = true
 
-    /** Moves to the next page. On a R2L pager the next page is the one at the left. */
     override fun moveToNext() {
         moveLeft()
     }
 
-    /** Moves to the previous page. On a R2L pager the previous page is the one at the right. */
     override fun moveToPrevious() {
         moveRight()
+    }
+
+    override fun moveRight() {
+        if (config.navigateToPan && canPanRight()) {
+            panRight()
+            return
+        }
+        val current =
+            (targetPagePosition ?: requestedPagePosition?.first ?: currentPagePosition).coerceIn(
+                0,
+                (items.size - 1).coerceAtLeast(0),
+            )
+        val item = items.getOrNull(current)
+        if (
+            item is ReaderUiItem.Transition &&
+                item.transition is ChapterTransition.Prev &&
+                item.transition.to != null
+        ) {
+            targetPagePosition = null
+            triggerLoadChapter(item.transition.to.chapter, navTarget = ChapterNavTarget.End)
+            return
+        }
+        if (current < items.size - 1) {
+            hasMoved = true
+            val target = current + 1
+            targetPagePosition = target
+            currentPagePosition = target
+            requestedPagePosition = target to config.usePageTransitions
+        } else if (item !is ReaderUiItem.Transition) {
+            targetPagePosition = null
+            activity.viewModel.navigateAdjacentChapter(forward = false)
+        }
+    }
+
+    override fun moveLeft() {
+        if (config.navigateToPan && canPanLeft()) {
+            panLeft()
+            return
+        }
+        val current =
+            (targetPagePosition ?: requestedPagePosition?.first ?: currentPagePosition).coerceIn(
+                0,
+                (items.size - 1).coerceAtLeast(0),
+            )
+        val item = items.getOrNull(current)
+        if (
+            item is ReaderUiItem.Transition &&
+                item.transition is ChapterTransition.Next &&
+                item.transition.to != null
+        ) {
+            targetPagePosition = null
+            triggerLoadChapter(item.transition.to.chapter, navTarget = ChapterNavTarget.Start)
+            return
+        }
+        if (current > 0) {
+            hasMoved = true
+            val target = current - 1
+            targetPagePosition = target
+            currentPagePosition = target
+            requestedPagePosition = target to config.usePageTransitions
+        } else if (item !is ReaderUiItem.Transition) {
+            targetPagePosition = null
+            activity.viewModel.navigateAdjacentChapter(forward = true)
+        }
     }
 }
 
 /** Implementation of a vertical (top to bottom) PagerViewer. */
-class VerticalPagerViewer(activity: ReaderActivity) : PagerViewer(activity) {
-    /** Creates a new vertical pager. */
-    override fun createPager(): Pager {
-        return Pager(activity, isHorizontal = false)
-    }
-}
+@Deprecated("Use ComposePagerViewer with ReaderViewModel and ReaderNavCommand instead")
+class VerticalPagerViewer(activity: ReaderActivity) : PagerViewer(activity)

@@ -2,15 +2,15 @@ package org.nekomanga.presentation.components.sheets
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.ripple.LocalRippleTheme
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
@@ -23,33 +23,52 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.data.external.ExternalLink
 import jp.wasabeef.gap.Gap
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
 import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun ExternalLinksSheet(
     themeColorState: ThemeColorState,
     externalLinks: List<ExternalLink>,
-    onLinkClick: (String, String) -> Unit
+    onLinkClick: (String, String) -> Unit,
 ) {
-    CompositionLocalProvider(LocalRippleTheme provides themeColorState.rippleTheme) {
-        BaseSheet(themeColor = themeColorState, maxSheetHeightPercentage = .9f) {
-            FlowRow(
+    CompositionLocalProvider(
+        LocalRippleConfiguration provides themeColorState.rippleConfiguration
+    ) {
+        BaseSheet(themeColor = themeColorState) {
+            Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = Size.small),
-                horizontalArrangement = Arrangement.spacedBy(Size.small, Alignment.Start),
+                horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(Size.small),
             ) {
-                externalLinks.forEach { LinkCard(externalLink = it, onLinkClick = onLinkClick) }
+                externalLinks.chunked(2).forEach {
+                    Row(
+                        modifier = if (it.size == 1) Modifier else Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Size.small),
+                    ) {
+                        it.forEach { externalLink ->
+                            LinkCard(
+                                modifier = if (it.size > 1) Modifier.weight(1f) else Modifier,
+                                externalLink = externalLink,
+                                onLinkClick = onLinkClick,
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun LinkCard(externalLink: ExternalLink, onLinkClick: (String, String) -> Unit) {
+private fun LinkCard(
+    modifier: Modifier = Modifier,
+    externalLink: ExternalLink,
+    onLinkClick: (String, String) -> Unit,
+) {
     OutlinedCard(
         onClick = { onLinkClick(externalLink.getUrl(), externalLink.name) },
-        modifier = Modifier.height(Size.huge),
+        modifier = modifier.height(Size.huge),
         colors = CardDefaults.outlinedCardColors(containerColor = Color(externalLink.logoColor)),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxHeight()) {
@@ -59,7 +78,8 @@ private fun LinkCard(externalLink: ExternalLink, onLinkClick: (String, String) -
                 Image(
                     painter = painterResource(id = externalLink.logo),
                     contentDescription = null,
-                    modifier = Modifier.size(28.dp).padding(top = Size.tiny, bottom = Size.tiny),
+                    modifier =
+                        Modifier.size(Size.largePlus).padding(top = Size.tiny, bottom = Size.tiny),
                 )
                 Gap(Size.small)
             } else {

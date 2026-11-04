@@ -3,8 +3,6 @@ package org.nekomanga.domain.track
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.toImmutableList
 
 data class TrackItem(
     val id: Long?,
@@ -27,15 +25,16 @@ data class TrackServiceItem(
     val nameRes: Int,
     val logoRes: Int,
     val logoColor: Int,
-    val statusList: ImmutableList<Int>,
+    val statusList: List<Int>,
     val supportsReadingDates: Boolean,
     val canRemoveFromService: Boolean,
     val isAutoAddTracker: Boolean,
     val isMdList: Boolean,
     val status: (Int) -> String,
     val displayScore: (TrackItem) -> String,
-    val scoreList: ImmutableList<String>,
+    val scoreList: List<String>,
     val indexToScore: (Int) -> Float,
+    val isCompletedStatus: (Int) -> Boolean = { false },
 )
 
 fun TrackService.toTrackServiceItem(): TrackServiceItem {
@@ -44,15 +43,16 @@ fun TrackService.toTrackServiceItem(): TrackServiceItem {
         nameRes = this.nameRes(),
         logoRes = this.getLogo(),
         logoColor = this.getLogoColor(),
-        statusList = this.getStatusList().toImmutableList(),
+        statusList = this.getStatusList().toList(),
         supportsReadingDates = this.supportsReadingDates,
         canRemoveFromService = this.canRemoveFromService(),
         isAutoAddTracker = this.isAutoAddTracker(),
         isMdList = this.isMdList(),
         status = { num -> this.getStatus(num) },
         displayScore = { track -> this.displayScore(track.toDbTrack()) },
-        scoreList = this.getScoreList().toImmutableList(),
+        scoreList = this.getScoreList().toList(),
         indexToScore = { index -> this.indexToScore(index) },
+        isCompletedStatus = { status -> status == this.completedStatus() },
     )
 }
 

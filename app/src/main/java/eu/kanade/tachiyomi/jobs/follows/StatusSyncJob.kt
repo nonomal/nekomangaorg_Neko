@@ -18,25 +18,24 @@ import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.online.MangaDexLoginHelper
-import eu.kanade.tachiyomi.util.system.launchIO
-import eu.kanade.tachiyomi.util.system.launchUI
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.tryToSetForeground
 import eu.kanade.tachiyomi.util.system.withUIContext
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.nekomanga.R
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.injectLazy
 
 /** WorkManager job that syncs FollowsList to and from Neko */
-class StatusSyncJob(
-    val context: Context,
-    params: WorkerParameters,
-) : CoroutineWorker(context, params) {
+class StatusSyncJob(val context: Context, params: WorkerParameters) :
+    CoroutineWorker(context, params) {
 
     private val followsSyncProcessor: FollowsSyncProcessor by injectLazy()
     val source: SourceManager by injectLazy()
@@ -74,7 +73,7 @@ class StatusSyncJob(
             return@coroutineScope Result.failure()
         }
         try {
-            when (val ids = inputData.getString(SYNC_TO_MANGADEX)) {
+            when (val ids = inputData.getString(SYNC_TYPE)) {
                 null,
                 "0" -> {
                     TimberKt.d { "sync to MangaDex" }
@@ -92,12 +91,12 @@ class StatusSyncJob(
                             ::errorNotification,
                             ::updateNotificationProgress,
                             ::completeNotificationFromDex,
-                            ::updateManga
+                            ::updateManga,
                         )
                     withUIContext {
                         applicationContext.toast(
                             applicationContext.getString(
-                                R.string.sync_follows_to_library_toast,
+                                R.string.pull_follows_to_library_toast,
                                 total,
                             ),
                             Toast.LENGTH_LONG,
@@ -120,7 +119,7 @@ class StatusSyncJob(
             TimberKt.e(e) { "error syncing follows" }
             return@coroutineScope Result.failure()
         } finally {
-            launchIO {
+            withContext(NonCancellable + Dispatchers.IO) {
                 delay(3.seconds.inWholeMilliseconds)
                 context.notificationManager.cancel(Notifications.Id.Status.Progress)
                 context.notificationManager.cancel(Notifications.Id.Status.Complete)
@@ -137,14 +136,11 @@ class StatusSyncJob(
         )
     }
 
-    private fun completeNotificationToDex(total: Int) {
+    private suspend fun completeNotificationToDex(total: Int) {
         completeNotification(R.string.sync_follows_complete)
-        launchUI {
+        withUIContext {
             applicationContext.toast(
-                applicationContext.getString(
-                    R.string.push_favorites_to_mangadex_toast,
-                    total,
-                ),
+                applicationContext.getString(R.string.push_favorites_to_mangadex_toast, total),
                 Toast.LENGTH_LONG,
             )
         }
@@ -154,7 +150,7 @@ class StatusSyncJob(
         completeNotification(R.string.sync_to_follows_complete)
     }
 
-    private fun updateManga(libraryMangaList: List<Long>) {
+    private suspend fun updateManga(libraryMangaList: List<Long>) {
         if (libraryMangaList.isNotEmpty()) {
             LibraryUpdateJob.startNow(context.applicationContext, mangaIdsToUse = libraryMangaList)
         }
@@ -167,10 +163,7 @@ class StatusSyncJob(
             progressNotification
                 .setContentTitle(context.getString(R.string.sync_follows_complete))
                 .build()
-        context.notificationManager.notify(
-            Notifications.Id.Status.Complete,
-            notification,
-        )
+        context.notificationManager.notify(Notifications.Id.Status.Complete, notification)
     }
 
     private fun errorNotification(errorTxt: String? = null) {
@@ -182,32 +175,30 @@ class StatusSyncJob(
                 )
                 .setAutoCancel(true)
                 .build()
-        context.notificationManager.notify(
-            Notifications.Id.Status.Complete,
-            notification,
-        )
+        context.notificationManager.notify(Notifications.Id.Status.Complete, notification)
     }
 
     companion object {
 
         val TAG = "follow_sync_job"
-        private const val SYNC_TO_MANGADEX = "sync_to_mangadex"
+        private const val SYNC_TYPE = "sync_type"
 
         const val entireLibraryToDex: String = "0"
-        const val entireFollowsFromDex = "1"
+        const val followsFromDex = "1"
 
-        fun startNow(context: Context, syncToMangadex: String) {
+        fun startNow(workManager: WorkManager, syncType: String) {
             val request =
                 OneTimeWorkRequestBuilder<StatusSyncJob>()
                     .addTag(TAG)
                     .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                    .setInputData(
-                        Data.Builder().putString(SYNC_TO_MANGADEX, syncToMangadex).build(),
-                    )
+                    .setInputData(Data.Builder().putString(SYNC_TYPE, syncType).build())
                     .build()
+            workManager.enqueueUniqueWork(TAG, ExistingWorkPolicy.KEEP, request)
+        }
 
-            WorkManager.getInstance(context)
-                .enqueueUniqueWork(TAG, ExistingWorkPolicy.KEEP, request)
+        fun startNow(context: Context, syncType: String) {
+            val workManager = WorkManager.getInstance(context)
+            startNow(workManager, syncType)
         }
 
         fun stop(context: Context) {

@@ -14,20 +14,23 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
-import eu.kanade.presentation.components.Divider
 import jp.wasabeef.gap.Gap
 import kotlinx.coroutines.launch
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.R
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.extensions.runOnEnterKeyPressed
 import org.nekomanga.presentation.theme.Size
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -44,7 +47,7 @@ fun ColumnScope.SearchFooter(
     search: (String) -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
-    val bringIntoViewRequester = BringIntoViewRequester()
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
 
     if (showDivider) {
@@ -53,6 +56,13 @@ fun ColumnScope.SearchFooter(
     }
 
     OutlinedTextField(
+        colors =
+            OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = themeColorState.primaryColor,
+                unfocusedBorderColor = themeColorState.primaryColor.copy(alpha = 0.7f),
+                cursorColor = themeColorState.primaryColor,
+                focusedLabelColor = themeColorState.primaryColor,
+            ),
         modifier =
             modifier
                 .fillMaxWidth()
@@ -60,6 +70,12 @@ fun ColumnScope.SearchFooter(
                 .onFocusEvent {
                     if (it.isFocused || it.hasFocus) {
                         scope.launch { bringIntoViewRequester.bringIntoView() }
+                    }
+                }
+                .runOnEnterKeyPressed {
+                    if (!isError) {
+                        focusManager.clearFocus()
+                        search(title)
                     }
                 }
                 .padding(horizontal = Size.small),
@@ -71,34 +87,22 @@ fun ColumnScope.SearchFooter(
             if (isError) {
                 Icon(
                     imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
+                    contentDescription = stringResource(id = R.string.warning),
+                    tint = MaterialTheme.colorScheme.error,
                 )
             } else if (title.isNotEmpty()) {
                 IconButton(onClick = { textChanged("") }) {
                     Icon(
                         imageVector = Icons.Default.Cancel,
-                        contentDescription = null,
-                        tint = themeColorState.buttonColor
+                        contentDescription = stringResource(id = R.string.clear),
+                        tint = themeColorState.primaryColor,
                     )
                 }
             }
         },
         isError = isError,
         onValueChange = { textChanged(it) },
-        colors =
-            TextFieldDefaults.outlinedTextFieldColors(
-                focusedLabelColor = themeColorState.buttonColor,
-                focusedBorderColor = themeColorState.buttonColor,
-                cursorColor = themeColorState.buttonColor,
-                errorBorderColor = MaterialTheme.colorScheme.error,
-                errorCursorColor = MaterialTheme.colorScheme.error,
-                errorLabelColor = MaterialTheme.colorScheme.error,
-            ),
-        keyboardOptions =
-            KeyboardOptions.Default.copy(
-                imeAction = ImeAction.Search,
-            ),
+        keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
         keyboardActions =
             KeyboardActions(
                 onSearch = {
@@ -106,7 +110,7 @@ fun ColumnScope.SearchFooter(
                         focusManager.clearFocus()
                         search(title)
                     }
-                },
+                }
             ),
     )
 }

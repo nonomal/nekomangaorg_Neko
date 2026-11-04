@@ -5,8 +5,6 @@ import android.database.sqlite.SQLiteDatabase
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.io.InputStream
-import java.io.OutputStream
 
 /**
  * This class provides operations to manage the database through its interfaces.
@@ -15,7 +13,7 @@ import java.io.OutputStream
 class MangaMappings(context: Context) {
 
     private val dbMappings: SQLiteDatabase by lazy {
-        openDatabase(context, "2024-02-05_neko_mapping.db")
+        openDatabase(context, "2026-07-23_neko_mapping.db")
     }
 
     private fun openDatabase(context: Context, dbPath: String): SQLiteDatabase {
@@ -32,15 +30,9 @@ class MangaMappings(context: Context) {
 
     @Throws(IOException::class)
     private fun copyDatabase(context: Context, dbFile: File, dbPath: String) {
-        val `is`: InputStream = context.assets.open(dbPath)
-        val os: OutputStream = FileOutputStream(dbFile)
-        val buffer = ByteArray(1024)
-        while (`is`.read(buffer) > 0) {
-            os.write(buffer)
+        context.assets.open(dbPath).use { `is` ->
+            FileOutputStream(dbFile).use { os -> `is`.copyTo(os) }
         }
-        os.flush()
-        os.close()
-        `is`.close()
     }
 
     fun getMangadexUUID(id: String, service: String): String? {
@@ -57,6 +49,12 @@ class MangaMappings(context: Context) {
 
     fun getMuNewForMuID(id: String): String? {
         val queryString = "SELECT mu_new FROM mappings WHERE mu = ? AND mu_new IS NOT NULL LIMIT 1"
+        val whereArgs = arrayOf(id)
+        return getResult(queryString, whereArgs)
+    }
+
+    fun getMbId(id: String): String? {
+        val queryString = "SELECT mb FROM mappings WHERE mdex = ? LIMIT 1"
         val whereArgs = arrayOf(id)
         return getResult(queryString, whereArgs)
     }

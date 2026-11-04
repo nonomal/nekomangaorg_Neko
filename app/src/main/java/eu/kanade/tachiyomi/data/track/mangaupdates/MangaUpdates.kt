@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.track.mangaupdates
 import android.content.Context
 import android.graphics.Color
 import androidx.annotation.StringRes
+import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackService
@@ -12,8 +13,8 @@ import eu.kanade.tachiyomi.data.track.mangaupdates.dto.copyTo
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.toTrackSearch
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.data.track.updateNewTrackInfo
-import kotlinx.collections.immutable.toImmutableList
 import org.nekomanga.R
+import org.nekomanga.logging.TimberKt
 
 class MangaUpdates(private val context: Context, id: Int) : TrackService(id) {
 
@@ -70,7 +71,7 @@ class MangaUpdates(private val context: Context, id: Int) : TrackService(id) {
                     else -> (0..9).map { fraction -> "$decimal.$fraction" }
                 }
             }
-            .toImmutableList()
+            .toList()
 
     override fun getScoreList(): List<String> = _scoreList
 
@@ -87,8 +88,19 @@ class MangaUpdates(private val context: Context, id: Int) : TrackService(id) {
         return track
     }
 
-    override suspend fun update(track: Track, setToRead: Boolean): Track {
-        updateTrackStatus(track, setToRead, setToComplete = true, mustReadToComplete = true)
+    override suspend fun update(
+        track: Track,
+        setToRead: Boolean,
+        manga: Manga?,
+        chapters: List<Chapter>?,
+    ): Track {
+        updateTrackStatus(
+            track,
+            setToRead,
+            mustReadToComplete = true,
+            manga = manga,
+            chapters = chapters,
+        )
         api.updateSeriesListItem(track)
         return track
     }
@@ -107,7 +119,7 @@ class MangaUpdates(private val context: Context, id: Int) : TrackService(id) {
     override suspend fun search(
         query: String,
         manga: Manga,
-        wasPreviouslyTracked: Boolean
+        wasPreviouslyTracked: Boolean,
     ): List<TrackSearch> {
         return api.search(query, manga, wasPreviouslyTracked).map { it.toTrackSearch(id) }
     }
@@ -132,11 +144,16 @@ class MangaUpdates(private val context: Context, id: Int) : TrackService(id) {
     }
 
     override suspend fun login(username: String, password: String): Boolean {
-        val authenticated =
-            api.authenticate(username, password) ?: throw Throwable("Unable to login")
-        saveCredentials(authenticated.uid.toString(), authenticated.sessionToken)
-        interceptor.newAuth(authenticated.sessionToken)
-        return true
+        return try {
+            val authenticated =
+                api.authenticate(username, password) ?: throw Throwable("Unable to login")
+            saveCredentials(username, authenticated.sessionToken)
+            interceptor.newAuth(authenticated.sessionToken)
+            return true
+        } catch (e: Exception) {
+            TimberKt.e(e) { "Error logging into MangaUpdates" }
+            false
+        }
     }
 
     fun restoreSession(): String? {

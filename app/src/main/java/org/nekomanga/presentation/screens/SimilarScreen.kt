@@ -1,8 +1,6 @@
 package org.nekomanga.presentation.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -12,45 +10,87 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.ModalBottomSheetLayout
-import androidx.compose.material.ModalBottomSheetValue
-import androidx.compose.material.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.mikepenz.iconics.typeface.library.community.material.CommunityMaterial
-import eu.kanade.tachiyomi.ui.similar.SimilarScreenState
-import kotlinx.collections.immutable.persistentListOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
+import eu.kanade.tachiyomi.ui.main.states.RefreshState
 import kotlinx.coroutines.launch
 import org.nekomanga.R
 import org.nekomanga.domain.category.CategoryItem
 import org.nekomanga.domain.manga.DisplayManga
-import org.nekomanga.presentation.components.AppBarActions
 import org.nekomanga.presentation.components.MangaGridWithHeader
 import org.nekomanga.presentation.components.MangaListWithHeader
-import org.nekomanga.presentation.components.NekoScaffold
-import org.nekomanga.presentation.components.NekoScaffoldType
-import org.nekomanga.presentation.components.PullRefresh
-import org.nekomanga.presentation.components.listGridAppBarAction
-import org.nekomanga.presentation.components.sheets.EditCategorySheet
+import org.nekomanga.presentation.components.UiText
+import org.nekomanga.presentation.components.scaffold.ChildScreenScaffold
 import org.nekomanga.presentation.functions.numberOfColumns
-import org.nekomanga.presentation.theme.Shapes
+import org.nekomanga.presentation.screens.browse.DisplayScreenSheet
+import org.nekomanga.presentation.screens.browse.DisplaySheetScreen
+import org.nekomanga.presentation.screens.similar.SimilarScreenState
+import org.nekomanga.presentation.screens.similar.SimilarTopBar
+import org.nekomanga.presentation.screens.similar.SimilarViewModel
 import org.nekomanga.presentation.theme.Size
 
+/**
+ * SimilarScreen displays manga recommendations similar to a given manga.
+ *
+ * This screen-level Composable is responsive to [WindowSizeClass]. On expanded screens
+ * (tablets/foldables), the layout limits the maximum width of the recommendations list/grid to
+ * 800.dp and centers it, preventing content from stretching uncomfortably wide.
+ *
+ * @param viewModel The ViewModel orchestrating the state of similar manga recommendations.
+ * @param windowSizeClass The screen's window size class constraints used to determine adaptive
+ *   styling.
+ * @param onBackPressed Callback invoked when the user navigates back.
+ * @param onNavigateTo Callback invoked to navigate to another screen.
+ */
 @Composable
 fun SimilarScreen(
-    similarScreenState: State<SimilarScreenState>,
+    viewModel: SimilarViewModel,
+    windowSizeClass: WindowSizeClass,
+    onBackPressed: () -> Unit,
+    onNavigateTo: (NavKey) -> Unit,
+) {
+
+    val screenState by viewModel.similarScreenState.collectAsStateWithLifecycle()
+
+    SimilarWrapper(
+        similarScreenState = screenState,
+        windowSizeClass = windowSizeClass,
+        switchDisplayClick = viewModel::switchDisplayMode,
+        libraryEntryVisibilityClick = viewModel::switchLibraryEntryVisibility,
+        onBackPress = onBackPressed,
+        mangaClick = { id -> onNavigateTo(Screens.Manga(id)) },
+        addNewCategory = viewModel::addNewCategory,
+        toggleFavorite = viewModel::toggleFavorite,
+        onRefresh = viewModel::refresh,
+    )
+}
+
+@Composable
+private fun SimilarWrapper(
+    similarScreenState: SimilarScreenState,
+    windowSizeClass: WindowSizeClass,
     switchDisplayClick: () -> Unit,
+    libraryEntryVisibilityClick: (Int) -> Unit,
     onBackPress: () -> Unit,
     mangaClick: (Long) -> Unit,
     addNewCategory: (String) -> Unit,
@@ -58,127 +98,165 @@ fun SimilarScreen(
     onRefresh: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val sheetState =
-        rememberModalBottomSheetState(
-            initialValue = ModalBottomSheetValue.Hidden,
-            skipHalfExpanded = true,
-            animationSpec = tween(durationMillis = 150, easing = LinearEasing),
-        )
-    var longClickedMangaId by remember { mutableStateOf<Long?>(null) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    val refreshState =
+        remember(similarScreenState.isRefreshing) {
+            RefreshState(
+                enabled = true,
+                isRefreshing = similarScreenState.isRefreshing,
+                onRefresh = onRefresh,
+            )
+        }
+
+    var currentBottomSheet: DisplaySheetScreen? by remember { mutableStateOf(null) }
+
+    LaunchedEffect(currentBottomSheet) {
+        if (currentBottomSheet != null) {
+            sheetState.show()
+        } else {
+            sheetState.hide()
+        }
+    }
 
     /** Close the bottom sheet on back if its open */
     BackHandler(enabled = sheetState.isVisible) { scope.launch { sheetState.hide() } }
 
-    ModalBottomSheetLayout(
-        sheetState = sheetState,
-        sheetShape = RoundedCornerShape(Shapes.sheetRadius),
-        sheetContent = {
-            Box(modifier = Modifier.defaultMinSize(minHeight = 1.dp)) {
-                EditCategorySheet(
-                    addingToLibrary = true,
-                    categories = similarScreenState.value.categories,
-                    cancelClick = { scope.launch { sheetState.hide() } },
-                    addNewCategory = addNewCategory,
-                    confirmClicked = { selectedCategories ->
-                        scope.launch { sheetState.hide() }
-                        longClickedMangaId?.let { toggleFavorite(it, selectedCategories) }
-                    },
-                )
-            }
-        },
-    ) {
-        NekoScaffold(
-            title = stringResource(id = R.string.similar),
-            type = NekoScaffoldType.Title,
-            onNavigationIconClicked = onBackPress,
-            actions = {
-                AppBarActions(
-                    actions =
-                        listOf(
-                            listGridAppBarAction(
-                                isList = similarScreenState.value.isList,
-                                onClick = switchDisplayClick,
-                            ),
-                        ),
-                )
-            },
-        ) { incomingPaddingValues ->
-            PullRefresh(
-                refreshing = similarScreenState.value.isRefreshing,
-                onRefresh = onRefresh,
-                indicatorOffset = (incomingPaddingValues.calculateTopPadding() + Size.huge),
-            ) {
-                val haptic = LocalHapticFeedback.current
+    val openSheet: (DisplaySheetScreen) -> Unit = { scope.launch { currentBottomSheet = it } }
 
-                SimilarContent(
-                    similarScreenState = similarScreenState,
-                    paddingValues = incomingPaddingValues,
-                    refreshing = onRefresh,
-                    mangaClick = mangaClick,
-                    mangaLongClick = { displayManga: DisplayManga ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        if (
-                            !displayManga.inLibrary && similarScreenState.value.promptForCategories
-                        ) {
-                            scope.launch {
-                                longClickedMangaId = displayManga.mangaId
-                                sheetState.show()
-                            }
-                        } else {
-                            toggleFavorite(displayManga.mangaId, emptyList())
+    currentBottomSheet?.let { currentSheet ->
+        ModalBottomSheet(
+            sheetState = sheetState,
+            onDismissRequest = { currentBottomSheet = null },
+            content = {
+                Box(modifier = Modifier.defaultMinSize(minHeight = Size.extraExtraTiny)) {
+                    DisplayScreenSheet(
+                        currentScreen = currentSheet,
+                        addNewCategory = addNewCategory,
+                        contentPadding =
+                            WindowInsets.navigationBars
+                                .only(WindowInsetsSides.Bottom)
+                                .asPaddingValues(),
+                        closeSheet = { currentBottomSheet = null },
+                        categories = similarScreenState.categories,
+                        isList = similarScreenState.isList,
+                        libraryEntryVisibility = similarScreenState.libraryEntryVisibility,
+                    )
+                }
+            },
+        )
+    }
+
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
+
+    val haptic = LocalHapticFeedback.current
+
+    ChildScreenScaffold(
+        refreshState = refreshState,
+        scrollBehavior = scrollBehavior,
+        topBar = {
+            SimilarTopBar(
+                screenState = similarScreenState,
+                onNavigationIconClicked = onBackPress,
+                scrollBehavior = scrollBehavior,
+                onSettingClick = {
+                    scope.launch {
+                        openSheet(
+                            DisplaySheetScreen.BrowseDisplayOptionsSheet(
+                                showIsList = true,
+                                switchDisplayClick = switchDisplayClick,
+                                libraryEntryVisibilityClick = libraryEntryVisibilityClick,
+                            )
+                        )
+                    }
+                },
+            )
+        },
+    ) { contentPadding ->
+        val isTablet = windowSizeClass.widthSizeClass == WindowWidthSizeClass.Expanded
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            SimilarContent(
+                modifier = if (isTablet) Modifier.widthIn(max = 800.dp) else Modifier.fillMaxSize(),
+                contentPadding = contentPadding,
+                similarScreenState = similarScreenState,
+                onRefresh = onRefresh,
+                mangaClick = mangaClick,
+                mangaLongClick = { displayManga: DisplayManga ->
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (!displayManga.inLibrary && similarScreenState.promptForCategories) {
+                        scope.launch {
+                            openSheet(
+                                DisplaySheetScreen.CategoriesSheet(
+                                    setCategories = { selectedCategories ->
+                                        scope.launch { sheetState.hide() }
+                                        toggleFavorite(displayManga.mangaId, selectedCategories)
+                                    }
+                                )
+                            )
                         }
-                    },
-                )
-            }
+                    } else {
+                        toggleFavorite(displayManga.mangaId, emptyList())
+                    }
+                },
+            )
         }
     }
 }
 
 @Composable
 private fun SimilarContent(
-    similarScreenState: State<SimilarScreenState>,
-    paddingValues: PaddingValues = PaddingValues(),
-    refreshing: () -> Unit,
+    similarScreenState: SimilarScreenState,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(),
+    onRefresh: () -> Unit,
     mangaClick: (Long) -> Unit,
     mangaLongClick: (DisplayManga) -> Unit,
 ) {
-    if (similarScreenState.value.displayManga.isEmpty()) {
-        if (similarScreenState.value.isRefreshing) {
-            Box(modifier = Modifier.fillMaxSize())
+    var collapsedGroups by rememberSaveable { mutableStateOf(emptySet<Int>()) }
+    val toggleGroupCollapse: (Int) -> Unit = { groupId ->
+        collapsedGroups =
+            if (groupId in collapsedGroups) collapsedGroups - groupId else collapsedGroups + groupId
+    }
+    if (similarScreenState.filteredDisplayManga.isEmpty()) {
+        if (similarScreenState.isRefreshing) {
+            Box(modifier = modifier.fillMaxSize())
         } else {
             EmptyScreen(
-                iconicImage = CommunityMaterial.Icon.cmd_compass_off,
-                iconSize = 176.dp,
-                message = stringResource(id = R.string.no_results_found),
-                actions = persistentListOf(Action(R.string.retry, refreshing)),
+                message = UiText.StringResource(resourceId = R.string.no_results_found),
+                modifier = modifier,
+                actions =
+                    listOf(
+                        Action(text = UiText.StringResource(R.string.retry), onClick = onRefresh)
+                    ),
             )
         }
     } else {
-        val contentPadding =
-            PaddingValues(
-                bottom =
-                    WindowInsets.navigationBars
-                        .only(WindowInsetsSides.Bottom)
-                        .asPaddingValues()
-                        .calculateBottomPadding(),
-                top = paddingValues.calculateTopPadding(),
-            )
-
-        if (similarScreenState.value.isList) {
+        if (similarScreenState.isList) {
             MangaListWithHeader(
-                groupedManga = similarScreenState.value.displayManga,
-                shouldOutlineCover = similarScreenState.value.outlineCovers,
+                groupedManga = similarScreenState.filteredDisplayManga,
+                shouldOutlineCover = similarScreenState.outlineCovers,
+                dynamicCover = similarScreenState.dynamicCovers,
+                modifier = modifier,
                 contentPadding = contentPadding,
+                collapsedGroups = collapsedGroups,
+                onToggleGroupCollapse = toggleGroupCollapse,
                 onClick = mangaClick,
                 onLongClick = mangaLongClick,
             )
         } else {
             MangaGridWithHeader(
-                groupedManga = similarScreenState.value.displayManga,
-                shouldOutlineCover = similarScreenState.value.outlineCovers,
-                columns = numberOfColumns(rawValue = similarScreenState.value.rawColumnCount),
-                isComfortable = similarScreenState.value.isComfortableGrid,
+                groupedManga = similarScreenState.filteredDisplayManga,
+                shouldOutlineCover = similarScreenState.outlineCovers,
+                dynamicCover = similarScreenState.dynamicCovers,
+                columns = numberOfColumns(rawValue = similarScreenState.rawColumnCount),
+                isComfortable = similarScreenState.isComfortableGrid,
+                modifier = modifier,
                 contentPadding = contentPadding,
+                collapsedGroups = collapsedGroups,
+                onToggleGroupCollapse = toggleGroupCollapse,
                 onClick = mangaClick,
                 onLongClick = mangaLongClick,
             )

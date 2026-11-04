@@ -12,10 +12,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.components.Divider
 import jp.wasabeef.gap.Gap
+import org.nekomanga.R
+import org.nekomanga.presentation.components.Divider
 import org.nekomanga.presentation.theme.Size
 
 /** Column scoped header with a cancel button */
@@ -25,8 +26,8 @@ fun ColumnScope.Header(text: String, cancelClick: () -> Unit) {
         IconButton(onClick = { cancelClick() }) {
             Icon(
                 imageVector = Icons.Default.Close,
-                contentDescription = null,
-                modifier = Modifier.size(28.dp),
+                contentDescription = stringResource(id = R.string.close),
+                modifier = Modifier.size(Size.largePlus),
                 tint = MaterialTheme.colorScheme.onSurface,
             )
         }

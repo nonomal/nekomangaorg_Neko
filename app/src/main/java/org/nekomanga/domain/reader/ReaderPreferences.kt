@@ -3,6 +3,8 @@ package org.nekomanga.domain.reader
 import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
 import eu.kanade.tachiyomi.ui.reader.settings.PageLayout
 import eu.kanade.tachiyomi.ui.reader.settings.ReaderBottomButton
+import eu.kanade.tachiyomi.ui.reader.settings.ReaderSliderPosition
+import eu.kanade.tachiyomi.ui.reader.settings.ReaderTheme
 import eu.kanade.tachiyomi.ui.reader.settings.ReadingModeType
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 import org.nekomanga.core.preferences.PreferenceValues
@@ -23,7 +25,7 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
 
     fun showPageNumber() = this.preferenceStore.getBoolean("pref_show_page_number_key", true)
 
-    fun trueColor() = this.preferenceStore.getBoolean("pref_true_color_key")
+    fun displayProfile() = preferenceStore.getString("pref_display_profile_key", "")
 
     fun fullscreen() = this.preferenceStore.getBoolean("fullscreen", true)
 
@@ -42,13 +44,13 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     fun defaultReadingMode() =
         this.preferenceStore.getInt(
             "pref_default_reading_mode_key",
-            ReadingModeType.RIGHT_TO_LEFT.flagValue
+            ReadingModeType.RIGHT_TO_LEFT.flagValue,
         )
 
     fun defaultOrientationType() =
         this.preferenceStore.getInt(
             "pref_default_orientation_type_key",
-            OrientationType.FREE.flagValue
+            OrientationType.FREE.flagValue,
         )
 
     fun imageScaleType() = this.preferenceStore.getInt("pref_image_scale_type_key", 1)
@@ -57,7 +59,11 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
 
     fun zoomStart() = this.preferenceStore.getInt("pref_zoom_start_key", 1)
 
-    fun readerTheme() = this.preferenceStore.getInt("pref_reader_theme_key", 2)
+    fun readerTheme() =
+        this.preferenceStore.getInt(
+            "pref_reader_theme_key",
+            ReaderTheme.SMART_BY_PAGE.prefValue,
+        )
 
     fun cropBorders() = this.preferenceStore.getBoolean("crop_borders")
 
@@ -69,11 +75,17 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
 
     fun grayscale() = this.preferenceStore.getBoolean("pref_grayscale")
 
+    fun colorEInk16bit() = this.preferenceStore.getBoolean("pref_eink_16bit", false)
+
+    fun colorEInkDither() = this.preferenceStore.getBoolean("pref_eink_dither", true)
+
     fun invertedColors() = this.preferenceStore.getBoolean("pref_inverted_colors")
 
     fun webtoonSidePadding() = this.preferenceStore.getInt("webtoon_side_padding")
 
     fun webtoonEnableZoomOut() = this.preferenceStore.getBoolean("webtoon_enable_zoom_out")
+
+    fun folderPerManga() = this.preferenceStore.getBoolean("create_folder_per_manga", false)
 
     fun readWithLongTap() = this.preferenceStore.getBoolean("reader_long_tap", true)
 
@@ -89,13 +101,13 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     fun pagerNavInverted() =
         this.preferenceStore.getEnum(
             "reader_tapping_inverted",
-            ViewerNavigation.TappingInvertMode.NONE
+            ViewerNavigation.TappingInvertMode.NONE,
         )
 
     fun webtoonNavInverted() =
         this.preferenceStore.getEnum(
             "reader_tapping_inverted_webtoon",
-            ViewerNavigation.TappingInvertMode.NONE
+            ViewerNavigation.TappingInvertMode.NONE,
         )
 
     fun pageLayout() = this.preferenceStore.getInt("page_layout", PageLayout.AUTOMATIC.value)
@@ -105,25 +117,37 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     fun invertDoublePages() = this.preferenceStore.getBoolean("invert_double_pages")
 
     fun webtoonPageLayout() =
-        this.preferenceStore.getInt("webtoon_page_layout", PageLayout.SINGLE_PAGE.value)
+        this.preferenceStore.getInt("webtoon_page_layout", PageLayout.SINGLE_PAGE.webtoonValue)
 
     fun webtoonReaderHideThreshold() =
         this.preferenceStore.getEnum(
             "reader_hide_threshold",
-            PreferenceValues.ReaderHideThreshold.LOW
+            PreferenceValues.ReaderHideThreshold.LOW,
         )
+
+    fun webtoonDisableGaps() = this.preferenceStore.getBoolean("webtoon_disable_gaps")
 
     fun webtoonInvertDoublePages() = this.preferenceStore.getBoolean("webtoon_invert_double_pages")
 
     fun readerBottomButtons() =
         this.preferenceStore.getStringSet(
             "reader_bottom_buttons",
-            ReaderBottomButton.BUTTONS_DEFAULTS
+            ReaderBottomButton.BUTTONS_DEFAULTS,
         )
 
     fun preloadPageAmount() = this.preferenceStore.getInt("preload_size", 6)
 
-    fun splitTallImages() = this.preferenceStore.getBoolean("split_tall_images")
+    fun splitTallImagesDownload() =
+        this.preferenceStore.getBoolean(
+            "split_tall_images_download",
+            this.preferenceStore.getBoolean("split_tall_images").get(),
+        )
+
+    fun splitTallImagesReader() =
+        this.preferenceStore.getBoolean(
+            "split_tall_images_reader",
+            this.preferenceStore.getBoolean("split_tall_images", true).get(),
+        )
 
     fun doublePageRotate() = this.preferenceStore.getBoolean("double_page_rotate")
 
@@ -137,4 +161,10 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
 
     fun alwaysShowChapterTransition() =
         this.preferenceStore.getBoolean("always_show_chapter_transition", true)
+
+    fun sliderPosition() =
+        this.preferenceStore.getEnum(
+            "reader_slider_position",
+            ReaderSliderPosition.RIGHT,
+        )
 }

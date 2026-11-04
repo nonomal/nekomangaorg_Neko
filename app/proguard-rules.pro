@@ -9,12 +9,9 @@
 -keep,allowoptimization class okhttp3.** { public protected *; }
 -keep,allowoptimization class okio.** { public protected *; }
 -keep,allowoptimization class logcat.** { public protected *; }
--keep,allowoptimization class rx.** { public protected *; }
 -keep,allowoptimization class org.jsoup.** { public protected *; }
 -keep,allowoptimization class com.google.gson.** { public protected *; }
 -keep,allowoptimization class uy.kohesive.injekt.** { public protected *; }
--keep,allowoptimization class eu.davidea.flexibleadapter.** { public protected *; }
--keep class io.requery.android.database.** { public protected *; }
 -keep class androidx.window.** { *; }
 -dontwarn androidx.window.**
 -keep class com.crashlytics.** { *; }
@@ -42,24 +39,11 @@
 -dontwarn okio.**
 -dontwarn javax.annotation.**
 
+# Coil3
+-keep class * extends coil3.util.DecoderServiceLoaderTarget { *; }
+-keep class * extends coil3.util.FetcherServiceLoaderTarget { *; }
 
-# RxJava 1.1.0
--dontwarn sun.misc.**
 
--keepclassmembers class rx.internal.util.unsafe.*ArrayQueue*Field* {
-   long producerIndex;
-   long consumerIndex;
-}
-
--keepclassmembers class rx.internal.util.unsafe.BaseLinkedQueueProducerNodeRef {
-    rx.internal.util.atomic.LinkedQueueNode producerNode;
-}
-
--keepclassmembers class rx.internal.util.unsafe.BaseLinkedQueueConsumerNodeRef {
-    rx.internal.util.atomic.LinkedQueueNode consumerNode;
-}
-
--dontnote rx.internal.util.PlatformDependent
 ##---------------End: proguard configuration for RxJava 1.x  ----------
 
 ##---------------Begin: proguard configuration for Gson  ----------
@@ -117,6 +101,15 @@
 -keep class kotlinx.serialization.**
 -keepclassmembers class kotlinx.serialization.** {
     <methods>;
+}
+
+
+#Remove after lifecyle 2.8.3
+-if public class androidx.compose.ui.platform.AndroidCompositionLocals_androidKt {
+    public static *** getLocalLifecycleOwner();
+}
+-keep public class androidx.compose.ui.platform.AndroidCompositionLocals_androidKt {
+    public static *** getLocalLifecycleOwner();
 }
 
 ##---------------End: proguard configuration for kotlinx.serialization  ----------

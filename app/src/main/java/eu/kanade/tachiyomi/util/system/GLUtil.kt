@@ -10,10 +10,35 @@ class GLUtil private constructor() {
         // Safe minimum default size
         private const val IMAGE_MAX_BITMAP_DIMENSION = 2048
 
-        val maxTextureSize: Int
-            get() {
+        /**
+         * Android HWUI [android.graphics.RecordingCanvas] throws [RuntimeException] ("Canvas:
+         * trying to draw too large(...) bitmap") if any drawn bitmap exceeds 100 MB (104,857,600
+         * bytes).
+         */
+        const val MAX_CANVAS_BITMAP_BYTES: Long = 100L * 1024 * 1024
+
+        /**
+         * Pixels a HARDWARE bitmap row is assumed to be padded to. Its byte count, which
+         * [android.graphics.RecordingCanvas] checks up to Android 14, uses the graphics buffer's
+         * row stride. Crash reports showed rows padded to a multiple of 64 pixels (5368 drawn as
+         * 5376, 8016 as 8064); 128 leaves a margin for other GPUs.
+         */
+        const val HARDWARE_ROW_ALIGNMENT: Int = 128
+
+        /**
+         * Bytes a [width] x [height] bitmap can count against [MAX_CANVAS_BITMAP_BYTES] when it is
+         * a HARDWARE bitmap, with the row padded to [HARDWARE_ROW_ALIGNMENT].
+         */
+        fun canvasBitmapBytes(width: Int, height: Int, bytesPerPixel: Int = 4): Long {
+            val alignment = HARDWARE_ROW_ALIGNMENT.toLong()
+            val paddedWidth = (width + alignment - 1) / alignment * alignment
+            return paddedWidth * height * bytesPerPixel
+        }
+
+        val maxTextureSize: Int by lazy {
+            try {
                 // Get EGL Display
-                val egl = EGLContext.getEGL() as EGL10
+                val egl = EGLContext.getEGL() as? EGL10 ?: return@lazy IMAGE_MAX_BITMAP_DIMENSION
                 val display = egl.eglGetDisplay(EGL10.EGL_DEFAULT_DISPLAY)
 
                 // Initialise
@@ -30,7 +55,7 @@ class GLUtil private constructor() {
                     display,
                     configurationsList,
                     totalConfigurations[0],
-                    totalConfigurations
+                    totalConfigurations,
                 )
 
                 val textureSize = IntArray(1)
@@ -43,7 +68,7 @@ class GLUtil private constructor() {
                         display,
                         configurationsList[i],
                         EGL10.EGL_MAX_PBUFFER_WIDTH,
-                        textureSize
+                        textureSize,
                     )
 
                     // Keep track of the maximum texture size
@@ -54,8 +79,23 @@ class GLUtil private constructor() {
                 egl.eglTerminate(display)
 
                 // Return largest texture size found, or default
-                return max(maximumTextureSize, IMAGE_MAX_BITMAP_DIMENSION)
+                max(maximumTextureSize, IMAGE_MAX_BITMAP_DIMENSION)
+            } catch (_: Throwable) {
+                IMAGE_MAX_BITMAP_DIMENSION
             }
+        }
+
+        /**
+         * Safe maximum dimension for bitmaps rendered onto a hardware-accelerated Canvas. Clamped
+         * to at most [SAFE_CANVAS_BITMAP_DIMENSION] (4096) so that a square ARGB_8888 bitmap
+         * requires at most 4096 x 4096 x 4 = 64 MB, safely below [MAX_CANVAS_BITMAP_BYTES] (100
+         * MB).
+         */
+        const val SAFE_CANVAS_BITMAP_DIMENSION: Int = 4096
+
+        val maxCanvasTextureSize: Int by lazy {
+            minOf(maxTextureSize, SAFE_CANVAS_BITMAP_DIMENSION)
+        }
     }
 
     init {

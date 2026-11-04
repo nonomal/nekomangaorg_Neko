@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -15,38 +16,42 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import eu.kanade.tachiyomi.util.CrashLogUtil
-import kotlinx.coroutines.launch
 import org.nekomanga.R
+import org.nekomanga.presentation.components.scaffold.RootScaffold
 import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun CrashScreen(
     exception: Throwable?,
+    isSharing: Boolean,
+    onShareClick: () -> Unit,
     onRestartClick: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    Scaffold(
+    val scrollBehavior =
+        TopAppBarDefaults.enterAlwaysScrollBehavior(state = rememberTopAppBarState())
+
+    RootScaffold(
+        topBar = {},
+        scrollBehavior = scrollBehavior,
+        mainSettingsExpanded = false,
         bottomBar = {
             val strokeWidth = Dp.Hairline
             val borderColor = MaterialTheme.colorScheme.outline
             Column(
                 modifier =
-                    Modifier.drawBehind {
+                    Modifier.navigationBarsPadding()
+                        .drawBehind {
                             drawLine(
                                 borderColor,
                                 Offset(0f, 0f),
@@ -58,23 +63,21 @@ fun CrashScreen(
                 verticalArrangement = Arrangement.spacedBy(Size.small),
             ) {
                 Button(
-                    onClick = { scope.launch { CrashLogUtil(context).dumpLogs(exception) } },
+                    onClick = onShareClick,
+                    enabled = !isSharing,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(text = stringResource(id = R.string.pref_dump_crash_logs))
+                    Text(text = stringResource(id = R.string.share_crash_log))
                 }
-                OutlinedButton(
-                    onClick = onRestartClick,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
+                OutlinedButton(onClick = onRestartClick, modifier = Modifier.fillMaxWidth()) {
                     Text(text = stringResource(R.string.crash_screen_restart_application))
                 }
             }
         },
-    ) { paddingValues ->
+    ) { contentPadding ->
         Column(
             modifier =
-                Modifier.padding(paddingValues)
+                Modifier.padding(contentPadding)
                     .padding(horizontal = Size.medium)
                     .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -82,7 +85,7 @@ fun CrashScreen(
             Icon(
                 imageVector = Icons.Outlined.BugReport,
                 contentDescription = null,
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(Size.extraExtraHuge),
             )
             Text(
                 text = stringResource(R.string.crash_screen_title),
@@ -92,7 +95,7 @@ fun CrashScreen(
                 text =
                     stringResource(
                         R.string.crash_screen_description,
-                        stringResource(id = R.string.app_name)
+                        stringResource(id = R.string.app_name),
                     ),
                 modifier = Modifier.padding(horizontal = Size.medium),
             )
@@ -101,7 +104,7 @@ fun CrashScreen(
                     Modifier.padding(vertical = Size.small)
                         .clip(MaterialTheme.shapes.small)
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Text(
                     text = exception.toString(),

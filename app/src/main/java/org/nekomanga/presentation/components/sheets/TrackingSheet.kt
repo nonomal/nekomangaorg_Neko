@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cancel
@@ -40,24 +38,22 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import eu.kanade.presentation.components.Divider
-import eu.kanade.presentation.components.VerticalDivider
 import eu.kanade.tachiyomi.ui.manga.TrackingConstants.ReadingDate
 import eu.kanade.tachiyomi.ui.manga.TrackingConstants.TrackAndService
 import eu.kanade.tachiyomi.ui.manga.TrackingConstants.TrackingDate
 import java.text.DateFormat
-import kotlinx.collections.immutable.ImmutableList
 import org.nekomanga.R
 import org.nekomanga.domain.track.TrackItem
 import org.nekomanga.domain.track.TrackServiceItem
+import org.nekomanga.presentation.components.Divider
 import org.nekomanga.presentation.components.NekoColors
+import org.nekomanga.presentation.components.VerticalDivider
 import org.nekomanga.presentation.components.dialog.RemoveTrackingDialog
 import org.nekomanga.presentation.components.dialog.TrackingChapterDialog
 import org.nekomanga.presentation.components.dialog.TrackingScoreDialog
 import org.nekomanga.presentation.components.dialog.TrackingStatusDialog
+import org.nekomanga.presentation.components.theme.ThemeColorState
 import org.nekomanga.presentation.extensions.conditional
-import org.nekomanga.presentation.screens.ThemeColorState
 import org.nekomanga.presentation.theme.Shapes
 import org.nekomanga.presentation.theme.Size
 
@@ -65,8 +61,8 @@ import org.nekomanga.presentation.theme.Size
 fun TrackingSheet(
     themeColor: ThemeColorState,
     inLibrary: Boolean,
-    servicesProvider: () -> ImmutableList<TrackServiceItem>,
-    tracksProvider: () -> ImmutableList<TrackItem>,
+    servicesProvider: () -> List<TrackServiceItem>,
+    tracksProvider: () -> List<TrackItem>,
     dateFormat: DateFormat,
     onLogoClick: (String, String) -> Unit,
     onSearchTrackClick: (TrackServiceItem, TrackItem?) -> Unit,
@@ -132,7 +128,7 @@ fun TrackingSheet(
                 TrackingDate(
                     readingDate = ReadingDate.Start,
                     currentDate = trackAndService.track.startedReadingDate,
-                    dateFormat = dateFormat
+                    dateFormat = dateFormat,
                 ),
             )
         } else if (calendarFinishedTrackDialog is ShowDialog) {
@@ -142,16 +138,16 @@ fun TrackingSheet(
                 TrackingDate(
                     readingDate = ReadingDate.Finish,
                     trackAndService.track.finishedReadingDate,
-                    dateFormat = dateFormat
-                )
+                    dateFormat = dateFormat,
+                ),
             )
         }
 
-        LazyColumn(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(Size.small)
+            verticalArrangement = Arrangement.spacedBy(Size.small),
         ) {
-            items(servicesProvider()) { service ->
+            servicesProvider().forEach { service ->
                 val track = tracksProvider().firstOrNull { it.trackServiceId == service.id }
 
                 val trackAndService =
@@ -226,7 +222,7 @@ private fun TrackingServiceItem(
                 1.dp,
                 MaterialTheme.colorScheme.onSurface.copy(
                     alpha = NekoColors.disabledAlphaLowContrast
-                )
+                ),
             ),
         modifier = Modifier.padding(horizontal = Size.small),
     ) {
@@ -251,7 +247,7 @@ private fun TrackingServiceItem(
                     service = trackAndService.service,
                     statusClick,
                     scoreClick,
-                    chapterClick
+                    chapterClick,
                 )
                 if (service.supportsReadingDates) {
                     Divider()
@@ -259,7 +255,7 @@ private fun TrackingServiceItem(
                         track = trackAndService.track,
                         dateFormat = dateFormat,
                         startDateClick = startDateClick,
-                        finishDateClick = finishDateClick
+                        finishDateClick = finishDateClick,
                     )
                 }
             }
@@ -272,7 +268,7 @@ private fun NoTrack(
     themeColor: ThemeColorState,
     service: TrackServiceItem,
     onLogoClick: (String, String) -> Unit,
-    searchTrackerClick: () -> Unit
+    searchTrackerClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxSize().height(Size.huge).clickable { searchTrackerClick() },
@@ -282,9 +278,9 @@ private fun NoTrack(
         Logo(service = service, track = null, onClick = onLogoClick)
         Text(
             text = stringResource(id = R.string.add_tracking),
-            color = themeColor.buttonColor,
+            color = themeColor.primaryColor,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -328,9 +324,9 @@ private fun TrackRowOne(
             IconButton(onClick = onRemoveClick) {
                 Icon(
                     imageVector = Icons.Default.Cancel,
-                    contentDescription = null,
+                    contentDescription = stringResource(id = R.string.remove),
                     modifier = Modifier.padding(end = Size.small).size(24.dp),
-                    tint = themeColor.buttonColor,
+                    tint = themeColor.primaryColor,
                 )
             }
         }
@@ -343,7 +339,7 @@ private fun TrackRowTwo(
     service: TrackServiceItem,
     statusClick: () -> Unit,
     scoreClick: () -> Unit,
-    chapterClick: () -> Unit
+    chapterClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
@@ -364,11 +360,10 @@ private fun TrackRowTwo(
             TrackingBox(clickable = chapterClick) {
                 val chapterText =
                     when {
-                        track.totalChapters > 0 &&
-                            track.lastChapterRead.toInt() == track.totalChapters ->
-                            stringResource(
-                                R.string.all_chapters_read,
-                            )
+                        (track.totalChapters > 0 &&
+                            track.lastChapterRead.toInt() == track.totalChapters) ||
+                            service.isCompletedStatus(track.status) ->
+                            stringResource(R.string.all_chapters_read)
                         track.totalChapters > 0 ->
                             stringResource(
                                 R.string.chapter_x_of_y,
@@ -385,8 +380,8 @@ private fun TrackRowTwo(
 
                 Text(
                     text = chapterText,
-                    style = MaterialTheme.typography.bodyMedium.copy(letterSpacing = (-.3f).sp),
-                    color = MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             }
             VerticalDivider()
@@ -427,7 +422,7 @@ fun TrackRowThree(
     track: TrackItem,
     dateFormat: DateFormat,
     startDateClick: () -> Unit = {},
-    finishDateClick: () -> Unit = {}
+    finishDateClick: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
@@ -478,12 +473,12 @@ private fun Logo(service: TrackServiceItem, track: TrackItem?, onClick: (String,
                 .background(color = Color(service.logoColor))
                 .conditional(track != null) {
                     clickable { onClick(track!!.trackingUrl, track.title) }
-                },
+                }
     ) {
         Image(
             painter = painterResource(id = service.logoRes),
-            contentDescription = null,
-            modifier = Modifier.align(Alignment.Center)
+            contentDescription = stringResource(id = service.nameRes),
+            modifier = Modifier.align(Alignment.Center),
         )
     }
 }
@@ -493,7 +488,7 @@ private fun RowScope.TrackingBox(clickable: () -> Unit, content: @Composable () 
     Box(
         Modifier.weight(1f)
             .clickable { clickable() }
-            .padding(horizontal = Size.small, vertical = 16.dp),
+            .padding(horizontal = Size.small, vertical = Size.medium),
         contentAlignment = Alignment.Center,
     ) {
         content()

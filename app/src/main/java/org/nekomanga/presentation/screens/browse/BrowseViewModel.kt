@@ -1,0 +1,646 @@
+package org.nekomanga.presentation.screens.browse
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.github.michaelbull.result.onErr
+import com.github.michaelbull.result.onOk
+import eu.kanade.tachiyomi.data.database.models.BrowseFilterImpl
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.ui.source.latest.DisplayScreenType
+import eu.kanade.tachiyomi.util.category.CategoryUtil
+import eu.kanade.tachiyomi.util.manga.filterVisibility
+import eu.kanade.tachiyomi.util.manga.resyncDisplayManga
+import eu.kanade.tachiyomi.util.manga.resyncHomePageManga
+import eu.kanade.tachiyomi.util.manga.unique
+import eu.kanade.tachiyomi.util.manga.updateVisibility
+import eu.kanade.tachiyomi.util.system.activeNetworkState
+import eu.kanade.tachiyomi.util.system.launchIO
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.Json
+import org.nekomanga.R
+import org.nekomanga.core.preferences.observeAndUpdate
+import org.nekomanga.core.security.SecurityPreferences
+import org.nekomanga.data.database.repository.BrowseFilterRepository
+import org.nekomanga.data.database.repository.MangaRepository
+import org.nekomanga.data.repository.BrowseRepository
+import org.nekomanga.domain.browse.BrowseHomeSection
+import org.nekomanga.domain.category.CategoryItem
+import org.nekomanga.domain.details.MangaDetailsPreferences
+import org.nekomanga.domain.filter.DexFilters
+import org.nekomanga.domain.filter.Filter
+import org.nekomanga.domain.filter.QueryType
+import org.nekomanga.domain.library.LibraryPreferences
+import org.nekomanga.domain.manga.MangaContentRating
+import org.nekomanga.domain.network.ResultError
+import org.nekomanga.domain.network.message
+import org.nekomanga.domain.site.MangaDexPreferences
+import org.nekomanga.presentation.components.UiText
+import org.nekomanga.presentation.screens.library.LibraryDisplayMode
+import org.nekomanga.usecases.category.CategoryUseCases
+import org.nekomanga.usecases.filter.CalculateDexFilterUseCase
+import org.nekomanga.usecases.manga.MangaUseCases
+import org.nekomanga.util.paging.DefaultPaginator
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
+
+class BrowseViewModel : ViewModel() {
+    private val browseRepository: BrowseRepository = Injekt.get()
+    val preferences: PreferencesHelper = Injekt.get()
+    private val libraryPreferences: LibraryPreferences = Injekt.get()
+    private val mangaDetailsPreferences: MangaDetailsPreferences = Injekt.get()
+    private val mangaDexPreferences: MangaDexPreferences = Injekt.get()
+    val securityPreferences: SecurityPreferences = Injekt.get()
+
+    private val categoryUseCases: CategoryUseCases by injectLazy()
+
+    val browseFilterRepository: BrowseFilterRepository = Injekt.get()
+
+    private val mangaRepository: MangaRepository = Injekt.get()
+
+    private val mangaUseCases: MangaUseCases by injectLazy()
+    private val calculateDexFilter: CalculateDexFilterUseCase by injectLazy()
+
+    private val _browseScreenState =
+        MutableStateFlow(
+            BrowseScreenState(
+                isList = preferences.browseAsList().get(),
+                libraryEntryVisibility = preferences.browseDisplayMode().get(),
+                outlineCovers = libraryPreferences.outlineOnCovers().get(),
+                dynamicCovers = mangaDetailsPreferences.dynamicCovers().get(),
+                isComfortableGrid =
+                    libraryPreferences.layout().get() != LibraryDisplayMode.CompactGrid,
+                rawColumnCount = libraryPreferences.gridSize().get(),
+                filters = createInitialDexFilter(""),
+                defaultContentRatings = mangaDexPreferences.visibleContentRatings().get().toSet(),
+                screenType = BrowseScreenType.Homepage,
+            )
+        )
+    val browseScreenState: StateFlow<BrowseScreenState> = _browseScreenState.asStateFlow()
+
+    private val _deepLinkManga = MutableStateFlow<Long?>(null)
+    val deepLinkMangaFlow = _deepLinkManga.asStateFlow()
+
+    private val _navigateEvent = Channel<NavigationEvent>()
+    val navigateEvent = _navigateEvent.receiveAsFlow()
+
+    fun initSearch(titleQuery: String) {
+        if (_browseScreenState.value.deepLinkHandled) return
+        _browseScreenState.update {
+            it.copy(deepLinkHandled = true, filters = createInitialDexFilter(titleQuery))
+        }
+        getSearchPage()
+    }
+
+    private fun createInitialDexFilter(incomingQuery: String): DexFilters {
+        val enabledContentRatings = mangaDexPreferences.visibleContentRatings().get()
+        val contentRatings =
+            MangaContentRating.getOrdered()
+                .map { Filter.ContentRating(it, enabledContentRatings.contains(it.key)) }
+                .toList()
+
+        return DexFilters(
+            query = Filter.Query(incomingQuery, QueryType.Title),
+            contentRatings = contentRatings,
+            contentRatingVisible = mangaDexPreferences.showContentRatingFilter().get(),
+        )
+    }
+
+    private val paginator =
+        DefaultPaginator(
+            initialKey = _browseScreenState.value.page,
+            onLoadUpdated = { _browseScreenState.update { state -> state.copy(pageLoading = it) } },
+            onRequest = {
+                browseRepository.getSearchPage(
+                    browseScreenState.value.page,
+                    browseScreenState.value.filters,
+                )
+            },
+            getNextKey = { _browseScreenState.value.page + 1 },
+            onError = { resultError ->
+                _browseScreenState.update {
+                    it.copy(
+                        initialLoading = false,
+                        pageLoading = false,
+                        error =
+                            UiText.String(
+                                when (resultError) {
+                                    is ResultError.Generic -> resultError.errorString
+                                    else -> (resultError as ResultError.HttpError).message
+                                }
+                            ),
+                    )
+                }
+            },
+            onSuccess = { hasNextPage, items, nextKey ->
+                val allDisplayManga =
+                    (_browseScreenState.value.displayMangaHolder.allDisplayManga + items)
+                        .distinctBy { it.url }
+
+                val filteredDisplayManga = allDisplayManga.filterVisibility(preferences).toList()
+                _browseScreenState.update { state ->
+                    state.copy(
+                        screenType = BrowseScreenType.Filter,
+                        displayMangaHolder =
+                            DisplayMangaHolder(
+                                BrowseScreenType.Filter,
+                                allDisplayManga.toList(),
+                                filteredDisplayManga.toList(),
+                            ),
+                        initialLoading = false,
+                        pageLoading = false,
+                        page = nextKey,
+                        endReached = !hasNextPage,
+                    )
+                }
+                if (filteredDisplayManga.isEmpty()) {
+                    loadNextItems()
+                }
+            },
+        )
+
+    init {
+        isOnline()
+
+        if (_browseScreenState.value.firstLoad) {
+            if (browseScreenState.value.filters.query.text.isNotBlank()) {
+                getSearchPage()
+            } else {
+                getHomepage()
+            }
+        }
+
+        updateBrowseFilters(_browseScreenState.value.firstLoad)
+        _browseScreenState.update { it.copy(firstLoad = false) }
+
+        viewModelScope.launchIO {
+            val categories = categoryUseCases.getCategories.get()
+
+            _browseScreenState.update {
+                it.copy(
+                    categories = categories,
+                    promptForCategories =
+                        CategoryUtil.shouldShowCategoryPrompt(libraryPreferences, categories),
+                )
+            }
+        }
+        preferences.browseAsList().changes().observeAndUpdate(viewModelScope) { isList ->
+            _browseScreenState.update { state -> state.copy(isList = isList) }
+        }
+
+        preferences.useVividColorHeaders().changes().observeAndUpdate(viewModelScope) { enabled ->
+            _browseScreenState.update { it.copy(useVividColorHeaders = enabled) }
+        }
+
+        securityPreferences.incognitoMode().changes().observeAndUpdate(viewModelScope) {
+            _browseScreenState.update { state -> state.copy(incognitoMode = it) }
+        }
+
+        browseRepository.isLoggedInFlow().observeAndUpdate(viewModelScope) {
+            _browseScreenState.update { state -> state.copy(isLoggedIn = it) }
+        }
+
+        preferences.browseDisplayMode().changes().observeAndUpdate(viewModelScope) { visibility ->
+            _browseScreenState.update { it.copy(libraryEntryVisibility = visibility) }
+            viewModelScope.launchIO {
+                _browseScreenState.update {
+                    it.copy(homePageManga = it.homePageManga.updateVisibility(preferences))
+                }
+            }
+            viewModelScope.launchIO {
+                _browseScreenState.update {
+                    it.copy(
+                        displayMangaHolder =
+                            it.displayMangaHolder.copy(
+                                filteredDisplayManga =
+                                    it.displayMangaHolder.allDisplayManga
+                                        .filterVisibility(preferences)
+                                        .toList(),
+                                groupedDisplayManga =
+                                    it.displayMangaHolder.groupedDisplayManga
+                                        .map { (stringRes, mangaList) ->
+                                            stringRes to
+                                                mangaList.updateVisibility(preferences).toList()
+                                        }
+                                        .toMap(),
+                            )
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadNextItems() {
+        viewModelScope.launchIO { paginator.loadNextItems() }
+    }
+
+    private fun getHomepage() {
+        viewModelScope.launchIO {
+            if (!isOnline()) return@launchIO
+            browseRepository
+                .getHomePage()
+                .onErr { resultError ->
+                    _browseScreenState.update { state ->
+                        state.copy(
+                            error = UiText.String(resultError.message()),
+                            initialLoading = false,
+                        )
+                    }
+                }
+                .onOk { sections ->
+                    _browseScreenState.update { state ->
+                        state.copy(
+                            homePageManga =
+                                sections.toHomePageManga().updateVisibility(preferences),
+                            initialLoading = false,
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun getFollows(forceUpdate: Boolean) {
+        viewModelScope.launchIO {
+            if (!isOnline()) return@launchIO
+            if (
+                forceUpdate ||
+                    _browseScreenState.value.displayMangaHolder.resultType !=
+                        BrowseScreenType.Follows
+            ) {
+                _browseScreenState.update { state -> state.copy(initialLoading = true) }
+                browseRepository
+                    .getFollows()
+                    .onErr {
+                        _browseScreenState.update { state ->
+                            state.copy(error = UiText.String(it.message()), initialLoading = false)
+                        }
+                    }
+                    .onOk {
+                        val groupedManga =
+                            it.updateVisibility(preferences)
+                                .groupBy { manga -> manga.displayTextRes!! }
+                                .map { entry ->
+                                    entry.key to
+                                        entry.value
+                                            .map { manga -> manga.copy(displayTextRes = null) }
+                                            .toList()
+                                }
+                                .toMap()
+                                .toMap()
+
+                        _browseScreenState.update { state ->
+                            state.copy(
+                                displayMangaHolder =
+                                    DisplayMangaHolder(
+                                        resultType = BrowseScreenType.Follows,
+                                        allDisplayManga =
+                                            it.distinctBy { manga -> manga.url }.toList(),
+                                        filteredDisplayManga =
+                                            it.filterVisibility(preferences).toList(),
+                                        groupedDisplayManga = groupedManga,
+                                    ),
+                                initialLoading = false,
+                            )
+                        }
+                    }
+            }
+        }
+    }
+
+    fun retry() {
+        viewModelScope.launchIO {
+            val initialLoading = _browseScreenState.value.page == 1
+            _browseScreenState.update { state ->
+                state.copy(initialLoading = initialLoading, error = null)
+            }
+            when (browseScreenState.value.screenType) {
+                BrowseScreenType.Homepage -> getHomepage()
+                else -> getSearchPage()
+            }
+        }
+    }
+
+    fun getSearchPage() {
+        viewModelScope.launchIO {
+            if (!isOnline()) return@launchIO
+
+            _browseScreenState.update { state ->
+                state.copy(
+                    initialLoading = true,
+                    error = null,
+                    page = 1,
+                    pageLoading = false,
+                    screenType = BrowseScreenType.Filter,
+                    displayMangaHolder =
+                        DisplayMangaHolder(
+                            resultType = BrowseScreenType.Filter,
+                            allDisplayManga = listOf(),
+                            filteredDisplayManga = listOf(),
+                        ),
+                )
+            }
+
+            // If no new search is provided, we use the existing filters in state
+            val currentMode = browseScreenState.value.filters.queryMode
+            val currentQuery = browseScreenState.value.filters.query.text
+
+            when (currentMode) {
+                QueryType.Author -> {
+                    _navigateEvent.send(
+                        NavigationEvent.NavigateToDisplay(
+                            DisplayScreenType.AuthorByName(UiText.String(currentQuery))
+                        )
+                    )
+                }
+
+                QueryType.Group -> {
+                    _navigateEvent.send(
+                        NavigationEvent.NavigateToDisplay(
+                            DisplayScreenType.GroupByName(UiText.String(currentQuery))
+                        )
+                    )
+                }
+
+                QueryType.List -> {
+                    _navigateEvent.send(
+                        NavigationEvent.NavigateToDisplay(
+                            DisplayScreenType.List(
+                                title = UiText.String(""),
+                                listUUID = currentQuery,
+                            )
+                        )
+                    )
+                }
+
+                else -> {
+                    // Standard Title/Tag search
+                    paginator.loadNextItems()
+                }
+            }
+        }
+    }
+
+    fun otherClick(uuid: String) {}
+
+    fun onDeepLinkMangaHandled() {
+        _deepLinkManga.value = null
+    }
+
+    fun randomManga() {
+        viewModelScope.launchIO {
+            _browseScreenState.update { it.copy(initialLoading = true) }
+            browseRepository
+                .getRandomManga()
+                .onErr { error ->
+                    _browseScreenState.update {
+                        it.copy(initialLoading = false, error = UiText.String(error.message()))
+                    }
+                }
+                .onOk { displayManga ->
+                    _browseScreenState.update { it.copy(initialLoading = false) }
+                    _deepLinkManga.value = displayManga.mangaId
+                }
+        }
+    }
+
+    fun toggleFavorite(mangaId: Long, categoryItems: List<CategoryItem>) {
+        viewModelScope.launchIO {
+            val isFavorite =
+                mangaUseCases.toggleMangaFavorite(
+                    mangaId = mangaId,
+                    categoryItems = categoryItems,
+                    categoriesProvider = { _browseScreenState.value.categories },
+                ) ?: return@launchIO
+
+            updateDisplayManga(mangaId, isFavorite)
+        }
+    }
+
+    private fun updateDisplayManga(mangaId: Long, favorite: Boolean) {
+        val isVisible =
+            when (preferences.browseDisplayMode().get() % 3) {
+                LibraryEntryVisibility.SHOW_IN_LIBRARY -> favorite
+                LibraryEntryVisibility.SHOW_NOT_IN_LIBRARY -> !favorite
+                else -> true
+            }
+        viewModelScope.launchIO {
+            _browseScreenState.update {
+                val updatedHomePage =
+                    it.homePageManga
+                        .map { homePageManga ->
+                            val list = homePageManga.displayManga
+                            val index = list.indexOfFirst { manga -> manga.mangaId == mangaId }
+                            if (index == -1) homePageManga
+                            else
+                                homePageManga.copy(
+                                    displayManga =
+                                        buildList {
+                                            addAll(list)
+                                            set(
+                                                index,
+                                                list[index].copy(
+                                                    inLibrary = favorite,
+                                                    isVisible = isVisible,
+                                                ),
+                                            )
+                                        }
+                                )
+                        }
+                        .toList()
+                val list = it.displayMangaHolder.allDisplayManga
+                val index = list.indexOfFirst { it.mangaId == mangaId }
+                if (index == -1) it.copy(homePageManga = updatedHomePage)
+                else {
+                    val tempList = buildList {
+                        addAll(list)
+                        set(index, list[index].copy(inLibrary = favorite, isVisible = isVisible))
+                    }
+                    it.copy(
+                        homePageManga = updatedHomePage,
+                        displayMangaHolder =
+                            it.displayMangaHolder.copy(
+                                allDisplayManga = tempList,
+                                filteredDisplayManga = tempList.filterVisibility(preferences),
+                                groupedDisplayManga =
+                                    it.displayMangaHolder.groupedDisplayManga.mapValues { (_, list)
+                                        ->
+                                        val index = list.indexOfFirst { manga ->
+                                            manga.mangaId == mangaId
+                                        }
+                                        if (index == -1) list
+                                        else
+                                            buildList {
+                                                addAll(list)
+                                                set(
+                                                    index,
+                                                    list[index].copy(
+                                                        inLibrary = favorite,
+                                                        isVisible = isVisible,
+                                                    ),
+                                                )
+                                            }
+                                    },
+                            ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveFilter(name: String) {
+        viewModelScope.launchIO {
+            val browseFilter =
+                BrowseFilterImpl(
+                    name = name,
+                    dexFilters = Json.encodeToString(browseScreenState.value.filters),
+                )
+            browseFilterRepository.insertBrowseFilter(browseFilter)
+            updateBrowseFilters()
+        }
+    }
+
+    fun loadFilter(browseFilterImpl: BrowseFilterImpl) {
+        viewModelScope.launchIO {
+            val dexFilters = Json.decodeFromString<DexFilters>(browseFilterImpl.dexFilters)
+            _browseScreenState.update { it.copy(filters = dexFilters) }
+        }
+    }
+
+    fun markFilterAsDefault(name: String, makeDefault: Boolean) {
+        viewModelScope.launchIO {
+            val updatedFilters =
+                browseScreenState.value.savedFilters.map {
+                    if (it.name == name) {
+                        it.copy(default = makeDefault)
+                    } else {
+                        it.copy(default = false)
+                    }
+                }
+            browseFilterRepository.insertBrowseFilters(updatedFilters)
+            updateBrowseFilters()
+        }
+    }
+
+    fun deleteFilter(name: String) {
+        viewModelScope.launchIO {
+            browseFilterRepository.deleteBrowseFilterByName(name)
+            updateBrowseFilters()
+        }
+    }
+
+    fun resetFilter() {
+        viewModelScope.launchIO {
+            val resetFilters = createInitialDexFilter("")
+            _browseScreenState.update { it.copy(filters = resetFilters) }
+        }
+    }
+
+    fun filterChanged(newFilter: Filter) {
+        viewModelScope.launchIO {
+            _browseScreenState.update {
+                it.copy(filters = calculateDexFilter(it.filters, newFilter))
+            }
+        }
+    }
+
+    /** Add New Category */
+    fun addNewCategory(newCategory: String) {
+        viewModelScope.launchIO {
+            categoryUseCases.modifyCategory.addNewCategory(newCategory)
+            _browseScreenState.update { it.copy(categories = categoryUseCases.getCategories.get()) }
+        }
+    }
+
+    fun switchDisplayMode() {
+        preferences.browseAsList().set(!browseScreenState.value.isList)
+    }
+
+    fun changeScreenType(browseScreenType: BrowseScreenType, forceUpdate: Boolean = false) {
+        viewModelScope.launchIO {
+            when (browseScreenType) {
+                BrowseScreenType.Follows -> getFollows(forceUpdate)
+                BrowseScreenType.Filter -> getSearchPage()
+                else -> Unit
+            }
+            _browseScreenState.update { it.copy(screenType = browseScreenType, error = null) }
+        }
+    }
+
+    fun switchLibraryEntryVisibility(visibility: Int) {
+        preferences.browseDisplayMode().set(visibility)
+    }
+
+    private fun updateBrowseFilters(initialLoad: Boolean = false) {
+        viewModelScope.launchIO {
+            val filters = browseFilterRepository.getBrowseFilters().toList()
+            _browseScreenState.update { it.copy(savedFilters = filters) }
+            if (initialLoad) {
+                filters
+                    .firstOrNull { it.default }
+                    ?.let { filter ->
+                        val dexFilters = Json.decodeFromString<DexFilters>(filter.dexFilters)
+                        _browseScreenState.update { it.copy(filters = dexFilters) }
+                    }
+            }
+        }
+    }
+
+    fun updateMangaForChanges() {
+        if (!_browseScreenState.value.firstLoad) {
+            viewModelScope.launchIO {
+                val newHomePageManga =
+                    _browseScreenState.value.homePageManga
+                        .resyncHomePageManga(mangaRepository)
+                        .updateVisibility(preferences)
+                _browseScreenState.update { it.copy(homePageManga = newHomePageManga) }
+            }
+            viewModelScope.launchIO {
+                val allDisplayManga =
+                    _browseScreenState.value.displayMangaHolder.allDisplayManga
+                        .resyncDisplayManga(mangaRepository)
+                        .unique()
+                _browseScreenState.update {
+                    it.copy(
+                        displayMangaHolder =
+                            it.displayMangaHolder.copy(
+                                allDisplayManga = allDisplayManga.toList(),
+                                filteredDisplayManga =
+                                    allDisplayManga.filterVisibility(preferences).toList(),
+                                groupedDisplayManga =
+                                    it.displayMangaHolder.groupedDisplayManga.mapValues { (_, list)
+                                        ->
+                                        list.resyncDisplayManga(mangaRepository).toList()
+                                    },
+                            )
+                    )
+                }
+            }
+        }
+    }
+
+    /** Check if can access internet */
+    private fun isOnline(): Boolean {
+        val isOnline = preferences.context.activeNetworkState().isOnline
+        _browseScreenState.update {
+            if (isOnline) {
+                it.copy(hideFooterButton = false)
+            } else {
+                it.copy(
+                    initialLoading = false,
+                    hideFooterButton = true,
+                    error = UiText.StringResource(R.string.no_network_connection),
+                )
+            }
+        }
+        return isOnline
+    }
+
+    private fun List<BrowseHomeSection>.toHomePageManga(): List<HomePageManga> = map {
+        HomePageManga(displayScreenType = it.displayScreenType, displayManga = it.mangaList)
+    }
+}

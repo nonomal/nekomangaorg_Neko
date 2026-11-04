@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.updater
 
+import android.app.Application
 import android.content.Context
 import android.os.Build
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
@@ -13,6 +14,8 @@ import org.nekomanga.BuildConfig
 import org.nekomanga.core.network.GET
 import tachiyomi.core.network.await
 import tachiyomi.core.network.parseAs
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 
 class AppUpdateChecker {
@@ -21,11 +24,13 @@ class AppUpdateChecker {
     private val preferences: PreferencesHelper by injectLazy()
     private val json: Json by injectLazy()
 
+    private val context: Context by lazy { Injekt.get<Application>().applicationContext }
+
     suspend fun checkForUpdate(
-        context: Context,
         isUserPrompt: Boolean = false,
         doExtrasAfterNewUpdate: Boolean = true,
     ): AppUpdateResult {
+        if (!BuildConfig.INCLUDE_UPDATER) return AppUpdateResult.NoNewUpdate
         // Limit checks to once a day at most
         if (
             !isUserPrompt &&
@@ -57,13 +62,20 @@ class AppUpdateChecker {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
                         preferences.appShouldAutoUpdate().get() != AppDownloadInstallJob.NEVER
                 ) {
-                    AppDownloadInstallJob.start(context, null, false, waitUntilIdle = true)
+                    AppDownloadInstallJob.start(
+                        context,
+                        null,
+                        false,
+                        waitUntilIdle = true,
+                        version = result.release.version,
+                    )
                 }
                 AppUpdateNotifier(context)
                     .promptUpdate(
                         result.release.info,
                         result.release.downloadLink,
                         result.release.releaseLink,
+                        result.release.version,
                     )
             }
 
@@ -73,5 +85,10 @@ class AppUpdateChecker {
 }
 
 const val GITHUB_REPO: String = "nekomangaorg/neko"
+
+const val REPO_URL = "https://github.com/$GITHUB_REPO"
+
 const val LATEST_RELEASE_URL = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 const val RELEASE_URL = "https://github.com/$GITHUB_REPO/releases/tag/${BuildConfig.VERSION_NAME}"
+
+const val LATEST_COMMIT_URL = "https://github.com/$GITHUB_REPO/commits/main"

@@ -4,10 +4,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
-import androidx.compose.material.ripple.LocalRippleTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,22 +19,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import com.chargemap.compose.numberpicker.NumberPicker
 import org.nekomanga.R
 import org.nekomanga.domain.track.TrackItem
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.presentation.components.ExpressivePicker
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun TrackingChapterDialog(
     themeColorState: ThemeColorState,
     track: TrackItem,
     onDismiss: () -> Unit,
-    trackChapterChanged: (Int) -> Unit
+    trackChapterChanged: (Int) -> Unit,
 ) {
     CompositionLocalProvider(
-        LocalRippleTheme provides themeColorState.rippleTheme,
-        LocalTextSelectionColors provides themeColorState.textSelectionColors
+        LocalRippleConfiguration provides themeColorState.rippleConfiguration,
+        LocalTextSelectionColors provides themeColorState.textSelectionColors,
     ) {
         var currentChapter by remember { mutableStateOf(track.lastChapterRead.toInt()) }
 
@@ -50,24 +49,20 @@ fun TrackingChapterDialog(
                 Text(
                     text = stringResource(id = R.string.chapters),
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 )
             },
             text = {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                    modifier = Modifier.padding(Size.medium).fillMaxWidth(),
                 ) {
-                    NumberPicker(
-                        modifier = Modifier.fillMaxWidth(.4f),
+                    ExpressivePicker(
                         value = currentChapter,
+                        themeColorState = themeColorState,
+                        items = (0..range).toList(),
                         onValueChange = { newChapter -> currentChapter = newChapter },
-                        range = 0..range,
-                        textStyle =
-                            MaterialTheme.typography.titleMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurface
-                            ),
-                        dividersColor = themeColorState.buttonColor,
+                        modifier = Modifier.fillMaxWidth(.4f),
                     )
                 }
             },
@@ -76,7 +71,9 @@ fun TrackingChapterDialog(
                 TextButton(
                     onClick = onDismiss,
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor)
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = R.string.cancel))
                 }
@@ -88,7 +85,9 @@ fun TrackingChapterDialog(
                         onDismiss()
                     },
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor),
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = android.R.string.ok))
                 }

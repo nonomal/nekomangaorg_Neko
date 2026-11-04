@@ -23,8 +23,10 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.nekomanga.constants.Constants
 import org.nekomanga.core.network.POST
 import org.nekomanga.core.network.interceptor.rateLimit
+import org.nekomanga.logging.TimberKt
 import tachiyomi.core.network.await
 import tachiyomi.core.network.jsonMime
 import tachiyomi.core.network.parseAs
@@ -63,11 +65,13 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
                     .parseAs<JsonObject>()
                     .let {
                         track.library_id =
-                            it["data"]!!
-                                .jsonObject["SaveMediaListEntry"]!!
-                                .jsonObject["id"]!!
-                                .jsonPrimitive
-                                .long
+                            it["data"]
+                                ?.jsonObject
+                                ?.get("SaveMediaListEntry")
+                                ?.jsonObject
+                                ?.get("id")
+                                ?.jsonPrimitive
+                                ?.long ?: 0L
                         track
                     }
             }
@@ -97,14 +101,17 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
                     .await()
                     .parseAs<JsonObject>()
                     .let { response ->
-                        val media = response["data"]!!.jsonObject["SaveMediaListEntry"]!!.jsonObject
-                        val startedDate = parseDate(media, "startedAt")
-                        if (track.started_reading_date <= 0L || startedDate > 0) {
-                            track.started_reading_date = startedDate
-                        }
-                        val finishedDate = parseDate(media, "completedAt")
-                        if (track.finished_reading_date <= 0L || finishedDate > 0) {
-                            track.finished_reading_date = finishedDate
+                        val media =
+                            response["data"]?.jsonObject?.get("SaveMediaListEntry")?.jsonObject
+                        if (media != null) {
+                            val startedDate = parseDate(media, "startedAt")
+                            if (track.started_reading_date <= 0L || startedDate > 0) {
+                                track.started_reading_date = startedDate
+                            }
+                            val finishedDate = parseDate(media, "completedAt")
+                            if (track.finished_reading_date <= 0L || finishedDate > 0) {
+                                track.finished_reading_date = finishedDate
+                            }
                         }
                         track
                     }
@@ -118,19 +125,44 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
         wasPreviouslyTracked: Boolean,
     ): List<TrackSearch> {
         return withIOContext {
-            val payload = buildJsonObject {
-                put(
-                    "query",
-                    if (manga.anilist_id != null && !wasPreviouslyTracked) findQuery()
-                    else searchQuery()
-                )
-                putJsonObject("variables") {
-                    put(
-                        "query",
-                        if (manga.anilist_id != null && !wasPreviouslyTracked) manga.anilist_id
-                        else search
-                    )
+            val anilistId = manga.anilist_id?.toIntOrNull()
+            if (anilistId != null && !wasPreviouslyTracked) {
+                try {
+                    val payload = buildJsonObject {
+                        put("query", findQuery())
+                        putJsonObject("variables") { put("query", anilistId) }
+                    }
+                    val list =
+                        with(json) {
+                            authClient
+                                .newCall(
+                                    POST(apiUrl, body = payload.toString().toRequestBody(jsonMime))
+                                )
+                                .await()
+                                .parseAs<JsonObject>()
+                                .let { response ->
+                                    val data =
+                                        response["data"]?.jsonObject ?: return@let emptyList()
+                                    val page = data["Page"]?.jsonObject ?: return@let emptyList()
+                                    val media = page["media"]?.jsonArray ?: return@let emptyList()
+                                    val entries = media.mapNotNull {
+                                        runCatching { jsonToALManga(it.jsonObject) }.getOrNull()
+                                    }
+                                    entries.map { it.toTrack() }
+                                }
+                        }
+                    if (list.isNotEmpty()) {
+                        return@withIOContext list
+                    }
+                } catch (e: Exception) {
+                    TimberKt.e(e) { "Error searching by Anilist ID" }
                 }
+            }
+
+            // Fallback/Default search by title
+            val payload = buildJsonObject {
+                put("query", searchQuery())
+                putJsonObject("variables") { put("query", search) }
             }
             with(json) {
                 authClient
@@ -138,10 +170,12 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
                     .await()
                     .parseAs<JsonObject>()
                     .let { response ->
-                        val data = response["data"]!!.jsonObject
-                        val page = data["Page"]!!.jsonObject
-                        val media = page["media"]!!.jsonArray
-                        val entries = media.map { jsonToALManga(it.jsonObject) }
+                        val data = response["data"]?.jsonObject ?: return@let emptyList()
+                        val page = data["Page"]?.jsonObject ?: return@let emptyList()
+                        val media = page["media"]?.jsonArray ?: return@let emptyList()
+                        val entries = media.mapNotNull {
+                            runCatching { jsonToALManga(it.jsonObject) }.getOrNull()
+                        }
                         entries.map { it.toTrack() }
                     }
             }
@@ -163,10 +197,12 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
                     .await()
                     .parseAs<JsonObject>()
                     .let { response ->
-                        val data = response["data"]!!.jsonObject
-                        val page = data["Page"]!!.jsonObject
-                        val media = page["mediaList"]!!.jsonArray
-                        val entries = media.map { jsonToALUserManga(it.jsonObject) }
+                        val data = response["data"]?.jsonObject ?: return@let null
+                        val page = data["Page"]?.jsonObject ?: return@let null
+                        val media = page["mediaList"]?.jsonArray ?: return@let null
+                        val entries = media.mapNotNull {
+                            runCatching { jsonToALUserManga(it.jsonObject) }.getOrNull()
+                        }
                         entries.firstOrNull()?.toTrack()
                     }
             }
@@ -195,29 +231,31 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
         return OAuth(token, "Bearer", System.currentTimeMillis() + yearToMS, yearToMS)
     }
 
-    suspend fun getCurrentUser(): Pair<Int, String> {
+    suspend fun getCurrentUser(): Pair<String, String> {
         return withIOContext {
             val payload = buildJsonObject { put("query", currentUserQuery()) }
             with(json) {
                 authClient
-                    .newCall(
-                        POST(
-                            apiUrl,
-                            body = payload.toString().toRequestBody(jsonMime),
-                        ),
-                    )
+                    .newCall(POST(apiUrl, body = payload.toString().toRequestBody(jsonMime)))
                     .await()
                     .parseAs<JsonObject>()
                     .let {
-                        val data = it["data"]!!.jsonObject
-                        val viewer = data["Viewer"]!!.jsonObject
-                        Pair(
-                            viewer["id"]!!.jsonPrimitive.int,
-                            viewer["mediaListOptions"]!!
-                                .jsonObject["scoreFormat"]!!
-                                .jsonPrimitive
-                                .content,
-                        )
+                        val data = it["data"]?.jsonObject ?: throw Exception("Invalid response")
+                        val viewer =
+                            data["Viewer"]?.jsonObject ?: throw Exception("Viewer data not found")
+                        val id =
+                            viewer["id"]?.jsonPrimitive?.int?.toString()
+                                ?: throw Exception("User ID not found")
+                        val user =
+                            viewer["name"]?.jsonPrimitive?.content
+                                ?: throw Exception("Username not found")
+                        val scoreFormat =
+                            viewer["mediaListOptions"]
+                                ?.jsonObject
+                                ?.get("scoreFormat")
+                                ?.jsonPrimitive
+                                ?.content ?: throw Exception("Score format not found")
+                        Pair(user + Constants.SEPARATOR + id, scoreFormat)
                     }
             }
         }
@@ -225,35 +263,37 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
 
     private fun jsonToALManga(struct: JsonObject): ALManga {
         return ALManga(
-            struct["id"]!!.jsonPrimitive.long,
-            struct["title"]!!.jsonObject["userPreferred"]!!.jsonPrimitive.content,
-            struct["coverImage"]!!.jsonObject["large"]!!.jsonPrimitive.content,
-            struct["description"]!!.jsonPrimitive.contentOrNull,
-            struct["format"]!!.jsonPrimitive.content.replace("_", "-"),
-            struct["status"]!!.jsonPrimitive.contentOrNull ?: "",
+            struct["id"]?.jsonPrimitive?.long ?: 0L,
+            struct["title"]?.jsonObject?.get("userPreferred")?.jsonPrimitive?.content ?: "",
+            struct["coverImage"]?.jsonObject?.get("large")?.jsonPrimitive?.content ?: "",
+            struct["description"]?.jsonPrimitive?.contentOrNull,
+            struct["format"]?.jsonPrimitive?.content?.replace("_", "-") ?: "",
+            struct["status"]?.jsonPrimitive?.contentOrNull ?: "",
             parseDate(struct, "startDate"),
-            struct["chapters"]!!.jsonPrimitive.intOrNull ?: 0,
+            struct["chapters"]?.jsonPrimitive?.intOrNull ?: 0,
         )
     }
 
     private fun jsonToALUserManga(struct: JsonObject): ALUserManga {
         return ALUserManga(
-            struct["id"]!!.jsonPrimitive.long,
-            struct["status"]!!.jsonPrimitive.content,
-            struct["scoreRaw"]!!.jsonPrimitive.int,
-            struct["progress"]!!.jsonPrimitive.int,
+            struct["id"]?.jsonPrimitive?.long ?: 0L,
+            struct["status"]?.jsonPrimitive?.content ?: "",
+            struct["scoreRaw"]?.jsonPrimitive?.int ?: 0,
+            struct["progress"]?.jsonPrimitive?.int ?: 0,
             parseDate(struct, "startedAt"),
             parseDate(struct, "completedAt"),
-            jsonToALManga(struct["media"]!!.jsonObject),
+            struct["media"]?.jsonObject?.let { jsonToALManga(it) }
+                ?: ALManga(0L, "", "", null, "", "", 0L, 0),
         )
     }
 
     private fun parseDate(struct: JsonObject, dateKey: String): Long {
         return try {
             val date = Calendar.getInstance()
-            val year = struct[dateKey]!!.jsonObject["year"]!!.jsonPrimitive.int
-            val month = struct[dateKey]!!.jsonObject["month"]!!.jsonPrimitive.int - 1
-            val day = struct[dateKey]!!.jsonObject["day"]!!.jsonPrimitive.int
+            val dateObj = struct[dateKey]?.jsonObject ?: return 0L
+            val year = dateObj["year"]?.jsonPrimitive?.int ?: return 0L
+            val month = dateObj["month"]?.jsonPrimitive?.int?.minus(1) ?: return 0L
+            val day = dateObj["day"]?.jsonPrimitive?.int ?: return 0L
             date.set(year, month, day)
             date.timeInMillis
         } catch (_: Exception) {
@@ -301,22 +341,21 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
         fun addToLibraryQuery() =
             """
             |mutation AddManga(${'$'}mangaId: Int, ${'$'}progress: Int, ${'$'}status: MediaListStatus, ${'$'}startedAt: FuzzyDateInput, ${'$'}completedAt: FuzzyDateInput) {
-                |SaveMediaListEntry (mediaId: ${'$'}mangaId, progress: ${'$'}progress, status: ${'$'}status, startedAt: ${'$'}startedAt, completedAt: ${'$'}completedAt) {
-                |   id
-                |   status
-                |}
+            |SaveMediaListEntry (mediaId: ${'$'}mangaId, progress: ${'$'}progress, status: ${'$'}status, startedAt: ${'$'}startedAt, completedAt: ${'$'}completedAt) {
+            |   id
+            |   status
             |}
-            |
-            """
+            |}
+            |"""
                 .trimMargin()
 
         fun deleteFromLibraryQuery() =
             """
-                |mutation DeleteManga(${'$'}listId: Int) {
-                |DeleteMediaListEntry (id: ${'$'}listId) {
-                    |deleted
-
-                |}
+            |mutation DeleteManga(${'$'}listId: Int) {
+            |DeleteMediaListEntry (id: ${'$'}listId) {
+            |deleted
+            |
+            |}
             |}
             """
                 .trimMargin()
@@ -324,138 +363,134 @@ class AnilistApi(val client: OkHttpClient, interceptor: AnilistInterceptor) {
         fun updateInLibraryQuery() =
             """
             |mutation UpdateManga(${'$'}listId: Int, ${'$'}progress: Int, ${'$'}status: MediaListStatus, ${'$'}score: Int, ${'$'}startedAt: FuzzyDateInput, ${'$'}completedAt: FuzzyDateInput) {
-                |SaveMediaListEntry (id: ${'$'}listId, progress: ${'$'}progress, status: ${'$'}status, scoreRaw: ${'$'}score, startedAt: ${'$'}startedAt, completedAt: ${'$'}completedAt) {
-                    |id
-                    |status
-                    |progress
-                    |startedAt {
-                        |year
-                        |month
-                        |day
-                    |}
-                    |completedAt {
-                        |year
-                        |month
-                        |day
-                    |}
-                |}
+            |SaveMediaListEntry (id: ${'$'}listId, progress: ${'$'}progress, status: ${'$'}status, scoreRaw: ${'$'}score, startedAt: ${'$'}startedAt, completedAt: ${'$'}completedAt) {
+            |id
+            |status
+            |progress
+            |startedAt {
+            |year
+            |month
+            |day
             |}
-            |
-            """
+            |completedAt {
+            |year
+            |month
+            |day
+            |}
+            |}
+            |}
+            |"""
                 .trimMargin()
 
         fun searchQuery() =
             """
             |query Search(${'$'}query: String) {
-                |Page (perPage: 50) {
-                    |media(search: ${'$'}query, type: MANGA, format_not_in: [NOVEL]) {
-                        |id
-                        |title {
-                            |userPreferred
-                        |}
-                        |coverImage {
-                            |large
-                        |}
-                        |format
-                        |status
-                        |chapters
-                        |description
-                        |startDate {
-                            |year
-                            |month
-                            |day
-                        |}
-                    |}
-                |}
+            |Page (perPage: 50) {
+            |media(search: ${'$'}query, type: MANGA, format_not_in: [NOVEL]) {
+            |id
+            |title {
+            |userPreferred
             |}
-            |
-            """
+            |coverImage {
+            |large
+            |}
+            |format
+            |status
+            |chapters
+            |description
+            |startDate {
+            |year
+            |month
+            |day
+            |}
+            |}
+            |}
+            |}
+            |"""
                 .trimMargin()
 
         fun findQuery() =
             """
             |query Media(${'$'}query: Int) {
-                |Page (perPage: 50) {
-                    |media(id: ${'$'}query, type: MANGA, format_not_in: [NOVEL]) {
-                        |id
-                        |title {
-                            |userPreferred
-                        |}
-                        |coverImage {
-                            |large
-                        |}
-                        |format
-                        |status
-                        |chapters
-                        |description
-                        |startDate {
-                            |year
-                            |month
-                            |day
-                        |}
-                    |}
-                |}
+            |Page (perPage: 50) {
+            |media(id: ${'$'}query, type: MANGA, format_not_in: [NOVEL]) {
+            |id
+            |title {
+            |userPreferred
             |}
-            |
-            """
+            |coverImage {
+            |large
+            |}
+            |format
+            |status
+            |chapters
+            |description
+            |startDate {
+            |year
+            |month
+            |day
+            |}
+            |}
+            |}
+            |}
+            |"""
                 .trimMargin()
 
         fun findLibraryMangaQuery() =
             """
             |query (${'$'}id: Int!, ${'$'}manga_id: Int!) {
-                |Page {
-                    |mediaList(userId: ${'$'}id, type: MANGA, mediaId: ${'$'}manga_id) {
-                        |id
-                        |status
-                        |scoreRaw: score(format: POINT_100)
-                        |progress
-                        |startedAt {
-                            |year
-                            |month
-                            |day
-                        |}
-                        |completedAt {
-                            |year
-                            |month
-                            |day
-                        |}
-                        |media {
-                            |id
-                            |title {
-                                |userPreferred
-                            |}
-                            |coverImage {
-                                |large
-                            |}
-                            |format
-                            |status
-                            |chapters
-                            |description
-                            |startDate {
-                                |year
-                                |month
-                                |day
-                            |}
-                        |}
-                    |}
-                |}
+            |Page {
+            |mediaList(userId: ${'$'}id, type: MANGA, mediaId: ${'$'}manga_id) {
+            |id
+            |status
+            |scoreRaw: score(format: POINT_100)
+            |progress
+            |startedAt {
+            |year
+            |month
+            |day
             |}
-            |
-            """
+            |completedAt {
+            |year
+            |month
+            |day
+            |}
+            |media {
+            |id
+            |title {
+            |userPreferred
+            |}
+            |coverImage {
+            |large
+            |}
+            |format
+            |status
+            |chapters
+            |description
+            |startDate {
+            |year
+            |month
+            |day
+            |}
+            |}
+            |}
+            |}
+            |}
+            |"""
                 .trimMargin()
 
         fun currentUserQuery() =
             """
             |query User {
-                |Viewer {
-                    |id
-                    |mediaListOptions {
-                        |scoreFormat
-                    |}
-                |}
+            |Viewer {
+            |id
+            |name
+            |mediaListOptions {
+            |scoreFormat
             |}
-            |
-            """
+            |}
+            |}
+            |"""
                 .trimMargin()
     }
 }

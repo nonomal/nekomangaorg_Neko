@@ -25,11 +25,13 @@ class WebtoonConfig(
     readerPreferences: ReaderPreferences = Injekt.get(),
 ) : ViewerConfig(preferences, readerPreferences, scope) {
 
-    var usePageTransitions = false
+    var usePageTransitions = readerPreferences.animatedPageTransitionsWebtoon().get()
         private set
 
     var webtoonCropBorders = false
         private set
+
+    var disableGaps = readerPreferences.webtoonDisableGaps().get()
 
     var verticalCropBorders = true
         private set
@@ -40,16 +42,25 @@ class WebtoonConfig(
     var enableZoomOut = false
         private set
 
+    var readerTheme = 0
+        private set
+
     var zoomPropertyChangedListener: ((Boolean) -> Unit)? = null
 
     var splitPages =
         readerPreferences.webtoonPageLayout().get() == PageLayout.SPLIT_PAGES.webtoonValue
+
+    var splitTallPages = readerPreferences.splitTallImagesReader().get()
 
     var invertDoublePages = false
 
     var menuThreshold = PreferenceValues.ReaderHideThreshold.LOW.threshold
 
     init {
+        readerPreferences
+            .readerTheme()
+            .register({ readerTheme = it }, { imagePropertyChangedListener?.invoke() })
+
         readerPreferences.animatedPageTransitionsWebtoon().register({ usePageTransitions = it })
 
         readerPreferences
@@ -58,16 +69,16 @@ class WebtoonConfig(
 
         readerPreferences
             .webtoonNavInverted()
-            .register(
-                { tappingInverted = it },
-                { navigator.invertMode = it },
-            )
+            .register({ tappingInverted = it }, { navigator.invertMode = it })
 
         readerPreferences
             .webtoonNavInverted()
             .changes()
             .drop(1)
-            .onEach { navigationModeInvertedListener?.invoke() }
+            .onEach {
+                navigator.invertMode = it
+                navigationModeInvertedListener?.invoke()
+            }
             .launchIn(scope)
 
         readerPreferences
@@ -77,6 +88,13 @@ class WebtoonConfig(
         readerPreferences
             .cropBorders()
             .register({ verticalCropBorders = it }, { imagePropertyChangedListener?.invoke() })
+
+        readerPreferences
+            .webtoonDisableGaps()
+            .changes()
+            .drop(1)
+            .onEach { reloadViewerListener?.invoke() }
+            .launchIn(scope)
 
         readerPreferences
             .webtoonSidePadding()
@@ -92,6 +110,10 @@ class WebtoonConfig(
                 { splitPages = it == PageLayout.SPLIT_PAGES.webtoonValue },
                 { imagePropertyChangedListener?.invoke() },
             )
+        readerPreferences.splitTallImagesReader().apply {
+            register({ splitTallPages = it })
+            changes().drop(1).onEach { reloadViewerListener?.invoke() }.launchIn(scope)
+        }
         readerPreferences.webtoonReaderHideThreshold().register({ menuThreshold = it.threshold })
         readerPreferences
             .webtoonInvertDoublePages()

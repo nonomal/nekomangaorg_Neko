@@ -2,11 +2,7 @@ package eu.kanade.tachiyomi.source.online.models.dto
 
 import kotlinx.serialization.Serializable
 
-@Serializable
-data class RelationListDto(
-    val response: String,
-    val data: List<RelationDto>,
-)
+@Serializable data class RelationListDto(val response: String, val data: List<RelationDto>)
 
 @Serializable
 data class RelationDto(
@@ -14,21 +10,27 @@ data class RelationDto(
     val relationships: List<RelationMangaDto>,
 )
 
-@Serializable
-data class RelationMangaDto(
-    val id: String,
-)
+@Serializable data class RelationMangaDto(val id: String)
+
+@Serializable data class RelationAttributesDto(val relation: String)
 
 @Serializable
-data class RelationAttributesDto(
-    val relation: String,
+data class RecommendationListDto(val response: String, val data: List<RecommendationDto>)
+
+@Serializable
+data class RecommendationDto(
+    val attributes: RecommendationAttributesDto,
+    val relationships: List<RelationMangaDto>,
 )
+
+@Serializable data class RecommendationAttributesDto(val score: Float)
 
 @Serializable
 data class SimilarMangaDatabaseDto(
     var similarApi: SimilarMangaDto? = null,
     var similarManga: List<RelatedMangaDto>? = null,
     var relatedManga: List<RelatedMangaDto>? = null,
+    var recommendedManga: List<RelatedMangaDto>? = null,
     var aniListApi: AnilistMangaRecommendationsDto? = null,
     var aniListManga: List<RelatedMangaDto>? = null,
     var myAnimelistApi: MalMangaRecommendationsDto? = null,
@@ -58,35 +60,21 @@ data class RelatedMangaDto(
 data class SimilarMangaMatchListDto(
     val id: String,
     val title: Map<String, String>,
-    val contentRating: String,
+    val contentRating: String = "",
     val score: Double,
-    val languages: List<String>,
+    val languages: List<String> = emptyList(),
 )
 
-@Serializable
-data class AnilistMangaRecommendationsDto(
-    val data: AnilistMangaSimilarMedia,
-)
+@Serializable data class AnilistMangaRecommendationsDto(val data: AnilistMangaSimilarMedia)
+
+@Serializable data class AnilistMangaSimilarMedia(val Media: AnilistMangaSimilarRecommendations)
 
 @Serializable
-data class AnilistMangaSimilarMedia(
-    val Media: AnilistMangaSimilarRecommendations,
-)
+data class AnilistMangaSimilarRecommendations(val recommendations: AnilistMangaSimilarEdges)
 
-@Serializable
-data class AnilistMangaSimilarRecommendations(
-    val recommendations: AnilistMangaSimilarEdges,
-)
+@Serializable data class AnilistMangaSimilarEdges(val edges: List<AnilistMangaSimilarEdge>)
 
-@Serializable
-data class AnilistMangaSimilarEdges(
-    val edges: List<AnilistMangaSimilarEdge>,
-)
-
-@Serializable
-data class AnilistMangaSimilarEdge(
-    val node: AnilistMangaSimilarNode,
-)
+@Serializable data class AnilistMangaSimilarEdge(val node: AnilistMangaSimilarNode)
 
 @Serializable
 data class AnilistMangaSimilarNode(
@@ -94,23 +82,12 @@ data class AnilistMangaSimilarNode(
     val rating: Int,
 )
 
-@Serializable
-data class AnilistMangaSimilarMediaRecommend(
-    val id: Long,
-    val format: String,
-)
+@Serializable data class AnilistMangaSimilarMediaRecommend(val id: Long, val format: String)
+
+@Serializable data class MalMangaRecommendationsDto(val data: List<MalMangaRecommendationDto>)
 
 @Serializable
-data class MalMangaRecommendationsDto(
-    val data: List<MalMangaRecommendationDto>,
-)
-
-@Serializable
-data class MalMangaRecommendationDto(
-    val entry: MalMangaDto,
-    val url: String,
-    val votes: Int,
-)
+data class MalMangaRecommendationDto(val entry: MalMangaDto, val url: String, val votes: Int)
 
 @Serializable
 data class MalMangaDto(
@@ -121,10 +98,7 @@ data class MalMangaDto(
 )
 
 @Serializable
-data class MalMangaImagesDto(
-    val jpg: MalMangaImageTypeDto,
-    val webp: MalMangaImageTypeDto,
-)
+data class MalMangaImagesDto(val jpg: MalMangaImageTypeDto, val webp: MalMangaImageTypeDto)
 
 @Serializable
 data class MalMangaImageTypeDto(
@@ -140,11 +114,7 @@ data class MUMangaDto(
 )
 
 @Serializable
-data class MURecommendationDto(
-    val series_name: String,
-    val series_id: Long,
-    val weight: Long,
-)
+data class MURecommendationDto(val series_name: String, val series_id: Long, val weight: Long)
 
 @Serializable
 data class MUCategoryRecommendationDto(

@@ -1,8 +1,5 @@
 package eu.kanade.tachiyomi.util.system
 
-import android.content.Context
-import android.content.res.Configuration
-import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
@@ -11,10 +8,6 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.webkit.MimeTypeMap
 import androidx.annotation.ColorInt
@@ -27,15 +20,14 @@ import com.hippo.unifile.UniFile
 import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.URLConnection
-import kotlin.math.abs
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import org.nekomanga.R
+import okio.Buffer
+import okio.BufferedSource
 import org.nekomanga.logging.TimberKt
 import tachiyomi.decoder.Format
 import tachiyomi.decoder.ImageDecoder
@@ -59,33 +51,33 @@ object ImageUtil {
 
     fun findImageType(stream: InputStream): ImageType? {
         return try {
-            when (getImageType(stream)?.format) {
-                Format.Avif -> ImageType.AVIF
-                Format.Gif -> ImageType.GIF
-                Format.Heif -> ImageType.HEIF
-                Format.Jpeg -> ImageType.JPEG
-                Format.Jxl -> ImageType.JXL
-                Format.Png -> ImageType.PNG
-                Format.Webp -> ImageType.WEBP
-                else -> null
-            }
+            getImageType(stream)?.toImageUtilType()
         } catch (e: Exception) {
             TimberKt.e(e) { "Error getting image type from stream" }
             null
         }
     }
 
-    fun resizeBitMapDrawable(drawable: Drawable, resources: Resources?, size: Int): Drawable? {
-        val b = (drawable as? BitmapDrawable)?.bitmap
-        val bitmapResized: Bitmap? =
-            if (b != null) {
-                Bitmap.createScaledBitmap(b, size, size, false)
-            } else {
-                null
-            }
-        return if (bitmapResized != null) {
-            BitmapDrawable(resources, bitmapResized)
-        } else {
+    fun findImageType(stream: BufferedSource): ImageType? {
+        return try {
+            getImageType(stream)?.toImageUtilType()
+        } catch (e: Exception) {
+            TimberKt.e(e) { "Error getting image type from stream" }
+            null
+        }
+    }
+
+    /**
+     * The mime type BitmapFactory reads from the image header, or null when it cannot decode the
+     * stream. Covers formats [findImageType] does not know, such as BMP.
+     */
+    fun findPlatformImageMime(openStream: () -> InputStream): String? {
+        return try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            openStream().use { BitmapFactory.decodeStream(it, null, options) }
+            options.outMimeType?.takeIf { options.outWidth > 0 && options.outHeight > 0 }
+        } catch (e: Exception) {
+            TimberKt.e(e) { "Error getting image type from stream" }
             null
         }
     }
@@ -99,25 +91,64 @@ object ImageUtil {
     fun isAnimatedAndSupported(stream: InputStream): Boolean {
         try {
             val type = getImageType(stream) ?: return false
-            return when (type.format) {
-                Format.Gif -> true
-                // Coil supports animated WebP on Android 9.0+
-                // https://coil-kt.github.io/coil/getting_started/#supported-image-formats
-                Format.Webp -> type.isAnimated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
-                else -> false
-            }
+            return type.isAnimatedAndSupported()
         } catch (e: Exception) {
             TimberKt.e(e) { "Error is animated image type" }
         }
         return false
     }
 
-    enum class ImageType(val mime: String, val extension: String) {
-        AVIF("image/avif", "avif"),
+    fun isAnimatedAndSupported(stream: BufferedSource): Boolean {
+        try {
+            val type = getImageType(stream) ?: return false
+            return type.isAnimatedAndSupported()
+        } catch (e: Exception) {
+            TimberKt.e(e) { "Error is animated image type" }
+        }
+        return false
+    }
+
+    internal fun tachiyomi.decoder.ImageType.toImageUtilType(): ImageType? {
+        return when (format) {
+            Format.Avif -> ImageType.AVIF
+            Format.Gif -> ImageType.GIF
+            Format.Heif -> ImageType.HEIF
+            Format.Jpeg -> ImageType.JPEG
+            Format.Jxl -> ImageType.JXL
+            Format.Png -> ImageType.PNG
+            Format.Webp -> ImageType.WEBP
+            else -> null
+        }
+    }
+
+    internal fun tachiyomi.decoder.ImageType.isAnimatedAndSupported(
+        sdkInt: Int = Build.VERSION.SDK_INT
+    ): Boolean {
+        return when (format) {
+            Format.Gif -> true
+            // https://coil-kt.github.io/coil/getting_started/#supported-image-formats
+            // Animated WebP support on Android 9+
+            Format.Webp -> isAnimated && sdkInt >= Build.VERSION_CODES.P
+            // Animated HEIF support on Android 11+
+            Format.Heif -> isAnimated && sdkInt >= Build.VERSION_CODES.R
+            else -> false
+        }
+    }
+
+    enum class ImageType(
+        val mime: String,
+        val extension: String,
+        /**
+         * The platform decoders can't be relied on for this format, so decode it with the bundled
+         * [ImageDecoder].
+         */
+        val needsNativeDecoder: Boolean = false,
+    ) {
+        AVIF("image/avif", "avif", needsNativeDecoder = true),
         GIF("image/gif", "gif"),
-        HEIF("image/heif", "heif"),
+        HEIF("image/heif", "heif", needsNativeDecoder = true),
         JPEG("image/jpeg", "jpg"),
-        JXL("image/jxl", "jxl"),
+        JXL("image/jxl", "jxl", needsNativeDecoder = true),
         PNG("image/png", "png"),
         WEBP("image/webp", "webp"),
     }
@@ -140,235 +171,14 @@ object ImageUtil {
         return ImageDecoder.findType(bytes)
     }
 
-    fun autoSetBackground(
-        image: Bitmap?,
-        alwaysUseWhite: Boolean,
-        preferBlack: Boolean,
-        context: Context
-    ): Drawable {
-        val backgroundColor =
-            if (alwaysUseWhite) {
-                Color.WHITE
-            } else {
-                val color = context.getResourceColor(R.attr.readerBackground)
-                if (preferBlack && !color.isWhite) {
-                    Color.BLACK
-                } else {
-                    color
-                }
-            }
-        if (image == null) return ColorDrawable(backgroundColor)
-        if (image.width < 50 || image.height < 50) {
-            return ColorDrawable(backgroundColor)
-        }
-        val top = 5
-        val bot = image.height - 5
-        val left = (image.width * 0.0275).toInt()
-        val right = image.width - left
-        val midX = image.width / 2
-        val midY = image.height / 2
-        val offsetX = (image.width * 0.01).toInt()
-        val topLeftIsDark = image.getPixel(left, top).isDark
-        val topRightIsDark = image.getPixel(right, top).isDark
-        val midLeftIsDark = image.getPixel(left, midY).isDark
-        val midRightIsDark = image.getPixel(right, midY).isDark
-        val topMidIsDark = image.getPixel(midX, top).isDark
-        val botLeftIsDark = image.getPixel(left, bot).isDark
-        val botRightIsDark = image.getPixel(right, bot).isDark
+    private fun getImageType(stream: BufferedSource): tachiyomi.decoder.ImageType? {
+        val bytes = stream.peek().readByteArray(32)
 
-        var darkBG =
-            (topLeftIsDark &&
-                (botLeftIsDark ||
-                    botRightIsDark ||
-                    topRightIsDark ||
-                    midLeftIsDark ||
-                    topMidIsDark)) ||
-                (topRightIsDark &&
-                    (botRightIsDark || botLeftIsDark || midRightIsDark || topMidIsDark))
-
-        if (
-            !image.getPixel(left, top).isWhite &&
-                pixelIsClose(image.getPixel(left, top), image.getPixel(midX, top)) &&
-                !image.getPixel(right, top).isWhite &&
-                pixelIsClose(image.getPixel(right, top), image.getPixel(right, bot)) &&
-                !image.getPixel(right, bot).isWhite &&
-                pixelIsClose(image.getPixel(right, bot), image.getPixel(midX, bot)) &&
-                !image.getPixel(midX, top).isWhite &&
-                pixelIsClose(image.getPixel(midX, top), image.getPixel(right, top)) &&
-                !image.getPixel(midX, bot).isWhite &&
-                pixelIsClose(image.getPixel(midX, bot), image.getPixel(left, bot)) &&
-                !image.getPixel(left, bot).isWhite &&
-                pixelIsClose(image.getPixel(left, bot), image.getPixel(left, top))
-        ) {
-            return ColorDrawable(image.getPixel(left, top))
+        if (bytes.isEmpty()) {
+            return null
         }
 
-        if (
-            image.getPixel(left, top).isWhite.toInt() +
-                image.getPixel(right, top).isWhite.toInt() +
-                image.getPixel(left, bot).isWhite.toInt() +
-                image.getPixel(right, bot).isWhite.toInt() > 2
-        ) {
-            darkBG = false
-        }
-
-        var blackPixel =
-            when {
-                topLeftIsDark -> image.getPixel(left, top)
-                topRightIsDark -> image.getPixel(right, top)
-                botLeftIsDark -> image.getPixel(left, bot)
-                botRightIsDark -> image.getPixel(right, bot)
-                else -> backgroundColor
-            }
-
-        var overallWhitePixels = 0
-        var overallBlackPixels = 0
-        var topBlackStreak = 0
-        var topWhiteStreak = 0
-        var botBlackStreak = 0
-        var botWhiteStreak = 0
-        outer@ for (x in intArrayOf(left, right, left - offsetX, right + offsetX)) {
-            var whitePixelsStreak = 0
-            var whitePixels = 0
-            var blackPixelsStreak = 0
-            var blackPixels = 0
-            var blackStreak = false
-            var whiteStrak = false
-            val notOffset = x == left || x == right
-            for ((index, y) in (0 until image.height step image.height / 25).withIndex()) {
-                val pixel = image.getPixel(x, y)
-                val pixelOff =
-                    image.getPixel(x + (if (x < image.width / 2) -offsetX else offsetX), y)
-                if (pixel.isWhite) {
-                    whitePixelsStreak++
-                    whitePixels++
-                    if (notOffset) {
-                        overallWhitePixels++
-                    }
-                    if (whitePixelsStreak > 14) {
-                        whiteStrak = true
-                    }
-                    if (whitePixelsStreak > 6 && whitePixelsStreak >= index - 1) {
-                        topWhiteStreak = whitePixelsStreak
-                    }
-                } else {
-                    whitePixelsStreak = 0
-                    if (pixel.isDark && pixelOff.isDark) {
-                        blackPixels++
-                        if (notOffset) {
-                            overallBlackPixels++
-                        }
-                        blackPixelsStreak++
-                        if (blackPixelsStreak >= 14) {
-                            blackStreak = true
-                        }
-                        continue
-                    }
-                }
-                if (blackPixelsStreak > 6 && blackPixelsStreak >= index - 1) {
-                    topBlackStreak = blackPixelsStreak
-                }
-                blackPixelsStreak = 0
-            }
-            if (blackPixelsStreak > 6) {
-                botBlackStreak = blackPixelsStreak
-            } else if (whitePixelsStreak > 6) {
-                botWhiteStreak = whitePixelsStreak
-            }
-            when {
-                blackPixels > 22 -> {
-                    if (x == right || x == right + offsetX) {
-                        blackPixel =
-                            when {
-                                topRightIsDark -> image.getPixel(right, top)
-                                botRightIsDark -> image.getPixel(right, bot)
-                                else -> blackPixel
-                            }
-                    }
-                    darkBG = true
-                    overallWhitePixels = 0
-                    break@outer
-                }
-                blackStreak -> {
-                    darkBG = true
-                    if (x == right || x == right + offsetX) {
-                        blackPixel =
-                            when {
-                                topRightIsDark -> image.getPixel(right, top)
-                                botRightIsDark -> image.getPixel(right, bot)
-                                else -> blackPixel
-                            }
-                    }
-                    if (blackPixels > 18) {
-                        overallWhitePixels = 0
-                        break@outer
-                    }
-                }
-                whiteStrak || whitePixels > 22 -> darkBG = false
-            }
-        }
-
-        val topIsBlackStreak = topBlackStreak > topWhiteStreak
-        val bottomIsBlackStreak = botBlackStreak > botWhiteStreak
-        if (overallWhitePixels > 9 && overallWhitePixels > overallBlackPixels) {
-            darkBG = false
-        }
-        if (topIsBlackStreak && bottomIsBlackStreak) {
-            darkBG = true
-        }
-        val isLandscape =
-            context.resources.configuration?.orientation == Configuration.ORIENTATION_LANDSCAPE
-        if (darkBG) {
-            return if (
-                !isLandscape &&
-                    image.getPixel(left, bot).isWhite &&
-                    image.getPixel(right, bot).isWhite
-            ) {
-                GradientDrawable(
-                    GradientDrawable.Orientation.TOP_BOTTOM,
-                    intArrayOf(blackPixel, blackPixel, backgroundColor, backgroundColor),
-                )
-            } else if (
-                !isLandscape &&
-                    image.getPixel(left, top).isWhite &&
-                    image.getPixel(right, top).isWhite
-            ) {
-                GradientDrawable(
-                    GradientDrawable.Orientation.TOP_BOTTOM,
-                    intArrayOf(backgroundColor, backgroundColor, blackPixel, blackPixel),
-                )
-            } else {
-                ColorDrawable(blackPixel)
-            }
-        }
-        if (
-            !isLandscape &&
-                (topIsBlackStreak ||
-                    (topLeftIsDark &&
-                        topRightIsDark &&
-                        image.getPixel(left - offsetX, top).isDark &&
-                        image.getPixel(right + offsetX, top).isDark &&
-                        (topMidIsDark || overallBlackPixels > 9)))
-        ) {
-            return GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(blackPixel, blackPixel, backgroundColor, backgroundColor),
-            )
-        } else if (
-            !isLandscape &&
-                (bottomIsBlackStreak ||
-                    (botLeftIsDark &&
-                        botRightIsDark &&
-                        image.getPixel(left - offsetX, bot).isDark &&
-                        image.getPixel(right + offsetX, bot).isDark &&
-                        (image.getPixel(midX, bot).isDark || overallBlackPixels > 9)))
-        ) {
-            return GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(backgroundColor, backgroundColor, blackPixel, blackPixel),
-            )
-        }
-        return ColorDrawable(backgroundColor)
+        return ImageDecoder.findType(bytes)
     }
 
     /**
@@ -393,7 +203,7 @@ object ImageUtil {
         imageBitmap: Bitmap,
         secondHalf: Boolean,
         progressCallback: ((Int) -> Unit)? = null,
-    ): ByteArrayInputStream {
+    ): BufferedSource {
         val height = imageBitmap.height
         val width = imageBitmap.width
         val result = Bitmap.createBitmap(width / 2, height, Bitmap.Config.ARGB_8888)
@@ -405,16 +215,16 @@ object ImageUtil {
                 if (!secondHalf) 0 else width / 2,
                 0,
                 if (secondHalf) width else width / 2,
-                height
+                height,
             ),
             result.rect,
-            null
+            null,
         )
         progressCallback?.invoke(99)
         val output = ByteArrayOutputStream()
         result.compress(Bitmap.CompressFormat.JPEG, 100, output)
         progressCallback?.invoke(100)
-        return ByteArrayInputStream(output.toByteArray())
+        return Buffer().write(output.toByteArray())
     }
 
     fun rotateImage(imageStream: InputStream, degrees: Float): InputStream {
@@ -427,6 +237,18 @@ object ImageUtil {
         rotated.compress(Bitmap.CompressFormat.JPEG, 100, output)
 
         return ByteArrayInputStream(output.toByteArray())
+    }
+
+    fun rotateImage(imageSource: BufferedSource, degrees: Float): BufferedSource {
+        val imageBytes = imageSource.readByteArray()
+
+        val imageBitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+        val rotated = rotateBitMap(imageBitmap, degrees)
+
+        val output = ByteArrayOutputStream()
+        rotated.compress(Bitmap.CompressFormat.JPEG, 100, output)
+
+        return Buffer().write(output.toByteArray())
     }
 
     private fun rotateBitMap(bitmap: Bitmap, degrees: Float): Bitmap {
@@ -442,6 +264,11 @@ object ImageUtil {
     fun isWideImage(imageStream: BufferedInputStream): Boolean {
         val options = extractImageOptions(imageStream)
         imageStream.reset()
+        return options.outWidth > options.outHeight
+    }
+
+    fun isWideImage(imageSource: BufferedSource): Boolean {
+        val options = extractImageOptions(imageSource)
         return options.outWidth > options.outHeight
     }
 
@@ -461,20 +288,8 @@ object ImageUtil {
         val canvas = Canvas(result)
         canvas.drawColor(Color.BLACK)
         progressCallback?.invoke(98)
-        val upperPart =
-            Rect(
-                0,
-                0,
-                result.width,
-                result.height / 2,
-            )
-        val lowerPart =
-            Rect(
-                0,
-                result.height / 2 + gap,
-                result.width,
-                result.height,
-            )
+        val upperPart = Rect(0, 0, result.width, result.height / 2)
+        val lowerPart = Rect(0, result.height / 2 + gap, result.width, result.height)
         canvas.drawBitmap(
             imageBitmap,
             Rect(
@@ -504,6 +319,53 @@ object ImageUtil {
         return ByteArrayInputStream(output.toByteArray())
     }
 
+    fun splitAndStackBitmap(
+        imageSource: BufferedSource,
+        rightSideOnTop: Boolean,
+        hasMargins: Boolean,
+        progressCallback: ((Int) -> Unit)? = null,
+    ): BufferedSource {
+        val imageBytes = imageSource.readByteArray()
+        val imageBitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+
+        val height = imageBitmap.height
+        val width = imageBitmap.width
+        val gap = if (hasMargins) 15.dpToPx else 0
+        val result = Bitmap.createBitmap(width / 2, height * 2 + gap, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(result)
+        canvas.drawColor(Color.BLACK)
+        progressCallback?.invoke(98)
+        val upperPart = Rect(0, 0, result.width, result.height / 2)
+        val lowerPart = Rect(0, result.height / 2 + gap, result.width, result.height)
+        canvas.drawBitmap(
+            imageBitmap,
+            Rect(
+                if (!rightSideOnTop) 0 else width / 2,
+                0,
+                if (!rightSideOnTop) width / 2 else width,
+                height,
+            ),
+            upperPart,
+            null,
+        )
+        canvas.drawBitmap(
+            imageBitmap,
+            Rect(
+                if (rightSideOnTop) 0 else width / 2,
+                0,
+                if (rightSideOnTop) width / 2 else width,
+                height,
+            ),
+            lowerPart,
+            null,
+        )
+        progressCallback?.invoke(99)
+        val output = ByteArrayOutputStream()
+        result.compress(Bitmap.CompressFormat.JPEG, 100, output)
+        progressCallback?.invoke(100)
+        return Buffer().write(output.toByteArray())
+    }
+
     fun mergeBitmaps(
         imageBitmap: Bitmap,
         imageBitmap2: Bitmap,
@@ -511,7 +373,7 @@ object ImageUtil {
         @ColorInt background: Int = Color.WHITE,
         gap: Int = 0,
         progressCallback: ((Int) -> Unit)? = null,
-    ): ByteArrayInputStream {
+    ): BufferedSource {
         val height = imageBitmap.height
         val width = imageBitmap.width
         val height2 = imageBitmap2.height
@@ -523,7 +385,7 @@ object ImageUtil {
             Bitmap.createBitmap(
                 width + width2 + gapInPx,
                 max(height, height2),
-                Bitmap.Config.ARGB_8888
+                Bitmap.Config.ARGB_8888,
             )
         val canvas = Canvas(result)
         canvas.drawColor(background)
@@ -564,7 +426,7 @@ object ImageUtil {
         val output = ByteArrayOutputStream()
         result.compress(Bitmap.CompressFormat.JPEG, 100, output)
         progressCallback?.invoke(100)
-        return ByteArrayInputStream(output.toByteArray())
+        return Buffer().write(output.toByteArray())
     }
 
     /**
@@ -578,20 +440,22 @@ object ImageUtil {
     }
 
     /** Splits tall images to improve performance of reader */
-    fun splitTallImage(imageFile: UniFile, imageFilePath: String): Boolean {
+    fun splitTallImage(tmpDir: UniFile, imageFile: UniFile, fileName: String): Boolean {
+        val imageBytes = imageFile.openInputStream().use { it.readBytes() }
+
         if (
-            isAnimatedAndSupported(imageFile.openInputStream()) ||
-                !isTallImage(imageFile.openInputStream())
+            ByteArrayInputStream(imageBytes).use { isAnimatedAndSupported(it) } ||
+                ByteArrayInputStream(imageBytes).use { !isTallImage(it) }
         ) {
             return true
         }
 
         val bitmapRegionDecoder =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                BitmapRegionDecoder.newInstance(imageFile.openInputStream())
+                ByteArrayInputStream(imageBytes).use { BitmapRegionDecoder.newInstance(it) }
             } else {
                 @Suppress("DEPRECATION")
-                BitmapRegionDecoder.newInstance(imageFile.openInputStream(), false)
+                ByteArrayInputStream(imageBytes).use { BitmapRegionDecoder.newInstance(it, false) }
             }
 
         if (bitmapRegionDecoder == null) {
@@ -600,19 +464,26 @@ object ImageUtil {
         }
 
         val options =
-            extractImageOptions(imageFile.openInputStream(), resetAfterExtraction = false).apply {
-                inJustDecodeBounds = false
+            ByteArrayInputStream(imageBytes).use {
+                extractImageOptions(it, resetAfterExtraction = false).apply {
+                    inJustDecodeBounds = false
+                }
             }
         val splitDataList = options.splitData
 
         return try {
             splitDataList.forEach { splitData ->
-                val splitPath = splitImagePath(imageFilePath, splitData.index)
+                val splitImageName = splitImageName(fileName, splitData.index)
+                // Remove pre-existing split if exists (this split shouldn't exist under normal
+                // circumstances)
+                tmpDir.findFile(splitImageName)?.delete()
+
+                val splitFile = tmpDir.createFile(splitImageName)!!
 
                 val region =
                     Rect(0, splitData.topOffset, splitData.splitWidth, splitData.bottomOffset)
 
-                FileOutputStream(splitPath).use { outputStream ->
+                splitFile.openOutputStream().use { outputStream ->
                     val splitBitmap = bitmapRegionDecoder.decodeRegion(region, options)
                     splitBitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
                     splitBitmap.recycle()
@@ -626,8 +497,8 @@ object ImageUtil {
         } catch (e: Exception) {
             // Image splits were not successfully saved so delete them and keep the original image
             splitDataList
-                .map { splitImagePath(imageFilePath, it.index) }
-                .forEach { File(it).delete() }
+                .map { splitImageName(fileName, it.index) }
+                .forEach { tmpDir.findFile(it)?.delete() }
             TimberKt.e(e) { "Error splitting image" }
             false
         } finally {
@@ -635,8 +506,8 @@ object ImageUtil {
         }
     }
 
-    private fun splitImagePath(imageFilePath: String, index: Int) =
-        imageFilePath.substringBeforeLast(".") + "__${"%03d".format(index + 1)}.jpg"
+    private fun splitImageName(fileName: String, index: Int) =
+        "${fileName}__${"%03d".format(Locale.ENGLISH, index + 1)}.jpg"
 
     private val BitmapFactory.Options.splitData
         get(): List<SplitData> {
@@ -650,7 +521,7 @@ object ImageUtil {
             val optimalSplitHeight = imageHeight / partCount
 
             Timber.d(
-                "Splitting image with height of $imageHeight into $partCount part with estimated ${optimalSplitHeight}px height per split",
+                "Splitting image with height of $imageHeight into $partCount part with estimated ${optimalSplitHeight}px height per split"
             )
 
             return mutableListOf<SplitData>().apply {
@@ -684,12 +555,6 @@ object ImageUtil {
     private val Bitmap.rect: Rect
         get() = Rect(0, 0, width, height)
 
-    private fun pixelIsClose(color1: Int, color2: Int): Boolean {
-        return abs(color1.red - color2.red) < 30 &&
-            abs(color1.green - color2.green) < 30 &&
-            abs(color1.blue - color2.blue) < 30
-    }
-
     /**
      * Returns if this bitmap matches what would be (if rightSide param is true) the single left
      * side page, or the second page to read in an RTL book, first in an LTR book.
@@ -722,7 +587,7 @@ object ImageUtil {
     private fun Bitmap.isSidePadded(
         rightSide: Boolean,
         checkWhite: Boolean,
-        halfCheck: Boolean = false
+        halfCheck: Boolean = false,
     ): Int {
         val left = (width * 0.0275).toInt()
         val right = width - left
@@ -827,6 +692,16 @@ object ImageUtil {
             .takeIf { it in 0f..1f } ?: 0f
     }
 
+    fun canUseHardwareBitmap(bitmap: Bitmap): Boolean =
+        canUseHardwareBitmap(bitmap.width, bitmap.height)
+
+    fun canUseHardwareBitmap(imageSource: BufferedSource): Boolean =
+        with(extractImageOptions(imageSource)) { canUseHardwareBitmap(outWidth, outHeight) }
+
+    private fun canUseHardwareBitmap(width: Int, height: Int): Boolean =
+        max(width, height) <= GLUtil.maxTextureSize &&
+            GLUtil.canvasBitmapBytes(width, height) <= GLUtil.MAX_CANVAS_BITMAP_BYTES
+
     /** Used to check an image's dimensions without loading it in the memory. */
     private fun extractImageOptions(
         imageStream: InputStream,
@@ -841,10 +716,24 @@ object ImageUtil {
         return options
     }
 
+    /**
+     * Reads the image's dimensions from its header. The webtoon reader calls this on the main
+     * thread, where reading the whole file of an 87 MB page froze the UI for up to 28 seconds.
+     */
+    fun extractImageOptions(imageSource: BufferedSource): BitmapFactory.Options {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        imageSource.peek().inputStream().use { BitmapFactory.decodeStream(it, null, options) }
+        if (options.outWidth > 0 && options.outHeight > 0) return options
+        // A codec that cannot get the dimensions from a stream may still get them from the bytes.
+        val imageBytes = imageSource.peek().readByteArray()
+        BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, options)
+        return options
+    }
+
     // Android doesn't include some mappings
     private val SUPPLEMENTARY_MIMETYPE_MAPPING =
         mapOf(
             // https://issuetracker.google.com/issues/182703810
-            "image/jxl" to "jxl",
+            "image/jxl" to "jxl"
         )
 }

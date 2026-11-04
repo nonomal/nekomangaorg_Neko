@@ -32,24 +32,8 @@ fun String.chop(count: Int, replacement: String = "⋅"): String {
     }
 }
 
-fun String.chopByWords(count: Int): String {
-    return if (length > count) {
-        val splitWords = split(" ")
-        val iterator = splitWords.iterator()
-        var newString = iterator.next()
-        return if (newString.length > count) {
-            chop(count)
-        } else {
-            var next = iterator.next()
-            while ("$newString $next".length <= count) {
-                newString = "$newString $next"
-                next = iterator.next()
-            }
-            newString
-        }
-    } else {
-        this
-    }
+fun String?.orIfBlank(other: String?): String {
+    return if (this.isNullOrBlank()) other ?: "" else this
 }
 
 fun String.removeArticles(): String {
@@ -186,3 +170,8 @@ fun String.htmlDecode(): String {
 }
 
 fun String.toResultError() = ResultError.Generic(errorString = this)
+
+fun String?.orUnknownError(context: Context): String {
+    if (!isNullOrBlank()) return this
+    return context.getString(R.string.unknown_error)
+}

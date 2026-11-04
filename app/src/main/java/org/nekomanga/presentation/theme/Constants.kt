@@ -15,9 +15,16 @@ object Size {
     val small = 8.dp
     val smedium = 12.dp
     val medium = 16.dp
+    val mediumLarge = 20.dp
     val large = 24.dp
+    val largePlus = 28.dp
     val extraLarge = 32.dp
     val huge = 48.dp
     val extraHuge = 56.dp
+    val extraExtraHuge = 64.dp
+
+    val appBarHeight = 64.dp
     val navBarSize = 68.dp
+    val squareCoverMedium = 72.dp
+    val squareCoverLarge = 96.dp
 }

@@ -1,18 +1,14 @@
 package eu.kanade.tachiyomi.util.chapter
 
 import android.content.Context
-import android.content.res.ColorStateList
-import android.widget.TextView
-import androidx.core.widget.TextViewCompat
-import androidx.vectordrawable.graphics.drawable.VectorDrawableCompat
 import eu.kanade.tachiyomi.data.database.models.Chapter
-import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
+import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.system.contextCompatColor
-import eu.kanade.tachiyomi.util.system.dpToPx
-import eu.kanade.tachiyomi.util.system.dpToPxEnd
 import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.system.timeSpanFromNow
 import org.nekomanga.R
+import org.nekomanga.constants.Constants
+import org.nekomanga.constants.MdConstants
 
 class ChapterUtil {
     companion object {
@@ -31,57 +27,9 @@ class ChapterUtil {
             }
         }
 
-        fun setTextViewForChapter(
-            textView: TextView,
-            chapter: Chapter,
-            showBookmark: Boolean = true,
-            hideStatus: Boolean = false,
-        ) {
-            val context = textView.context
-            textView.setTextColor(chapterColor(context, chapter, hideStatus))
-            if (!hideStatus && showBookmark) {
-                setBookmark(textView, chapter)
-            }
-        }
-
-        private fun setBookmark(textView: TextView, chapter: Chapter) {
-            if (chapter.bookmark) {
-                val context = textView.context
-                val drawable =
-                    VectorDrawableCompat.create(
-                        textView.resources,
-                        R.drawable.ic_bookmark_24dp,
-                        context.theme,
-                    )
-                drawable?.setBounds(0, 0, textView.textSize.toInt(), textView.textSize.toInt())
-                textView.setCompoundDrawablesRelative(
-                    drawable,
-                    null,
-                    null,
-                    null,
-                )
-                TextViewCompat.setCompoundDrawableTintList(
-                    textView,
-                    ColorStateList.valueOf(bookmarkedColor(context)),
-                )
-                textView.compoundDrawablePadding = 3.dpToPx
-                textView.translationX = (-2f).dpToPxEnd
-            } else {
-                textView.setCompoundDrawablesRelative(null, null, null, null)
-                textView.translationX = 0f
-            }
-        }
-
         fun chapterColor(context: Context, chapter: Chapter, hideStatus: Boolean = false): Int {
             return when {
                 hideStatus -> unreadColor(context)
-                chapter.read -> readColor(context)
-                else -> unreadColor(context)
-            }
-        }
-
-        fun readColor(context: Context, chapter: Chapter): Int {
-            return when {
                 chapter.read -> readColor(context)
                 else -> unreadColor(context)
             }
@@ -103,75 +51,149 @@ class ChapterUtil {
         private fun bookmarkedColor(context: Context): Int =
             context.getResourceColor(R.attr.colorSecondary)
 
-        private val volumeRegex = Regex("""(vol|volume)\.? *([0-9]+)?""", RegexOption.IGNORE_CASE)
-        private val seasonRegex = Regex("""(Season |S)([0-9]+)?""")
-
-        fun getGroupNumber(chapter: Chapter): Int? {
-            val groups = volumeRegex.find(chapter.name)?.groups
-            if (groups != null) return groups[2]?.value?.toIntOrNull()
-            val seasonGroups = seasonRegex.find(chapter.name)?.groups
-            if (seasonGroups != null) return seasonGroups[2]?.value?.toIntOrNull()
-            return null
-        }
-
-        private fun getVolumeNumber(chapter: Chapter): Int? {
-            val groups = volumeRegex.find(chapter.name)?.groups
-            if (groups != null) return groups[2]?.value?.toIntOrNull()
-            return null
-        }
-
-        private fun getSeasonNumber(chapter: Chapter): Int? {
-            val groups = seasonRegex.find(chapter.name)?.groups
-            if (groups != null) return groups[2]?.value?.toIntOrNull()
-            return null
-        }
-
-        fun hasMultipleVolumes(chapters: List<Chapter>): Boolean {
-            val volumeSet = mutableSetOf<Int>()
-            chapters.forEach {
-                val volNum = getVolumeNumber(it)
-                if (volNum != null) {
-                    volumeSet.add(volNum)
-                    if (volumeSet.size >= 2) return true
-                }
-            }
-            return false
-        }
-
-        fun hasMultipleSeasons(chapters: List<Chapter>): Boolean {
-            val volumeSet = mutableSetOf<Int>()
-            chapters.forEach {
-                val volNum = getSeasonNumber(it)
-                if (volNum != null) {
-                    volumeSet.add(volNum)
-                    if (volumeSet.size >= 2) return true
-                }
-            }
-            return false
-        }
-
-        fun hasTensOfChapters(chapters: List<ChapterItem>): Boolean {
-            return chapters.size > 20
-        }
-
-        private const val scanlatorSeparator = " & "
-
         fun getScanlators(scanlators: String?): List<String> {
             if (scanlators.isNullOrBlank()) return emptyList()
-            return scanlators.split(scanlatorSeparator).distinct()
+            if (!scanlators.contains(Constants.SCANLATOR_SEPARATOR)) {
+                return listOf(scanlators)
+            }
+            return scanlators.split(Constants.SCANLATOR_SEPARATOR).distinct()
         }
 
         fun getScanlatorString(scanlators: Set<String>): String {
-            return scanlators.toList().sorted().joinToString(scanlatorSeparator)
+            return scanlators.toList().sorted().joinToString(Constants.SCANLATOR_SEPARATOR)
         }
 
         fun getLanguages(language: String?): List<String> {
             if (language.isNullOrBlank()) return emptyList()
-            return language.split(scanlatorSeparator).distinct()
+            if (!language.contains(Constants.SCANLATOR_SEPARATOR)) {
+                return listOf(language)
+            }
+            return language.split(Constants.SCANLATOR_SEPARATOR).distinct()
         }
 
         fun getLanguageString(languages: Set<String>): String {
-            return languages.toList().sorted().joinToString(scanlatorSeparator)
+            return languages.toList().sorted().joinToString(Constants.SCANLATOR_SEPARATOR)
+        }
+
+        /**
+         * returns true for a list filter, if the source name exists in the filtered sources, and
+         * the chapter has the scanlator
+         */
+        fun filteredBySource(
+            sourceName: String,
+            scanlators: List<String>,
+            isMerged: Boolean,
+            isLocal: Boolean,
+            filteredSources: Set<String>,
+        ): Boolean {
+            if (filteredSources.isEmpty()) {
+                return false
+            }
+
+            val shouldCheck = sourceName in filteredSources
+            if (!shouldCheck) {
+                return false
+            }
+
+            if (sourceName == MdConstants.name && !isLocal) {
+                return !isMerged
+            }
+
+            if (sourceName == Constants.LOCAL_SOURCE) {
+                return isLocal
+            }
+
+            // at this point if the chapter is not merged and the source is Not MangaDex or Local
+            // then we already know it's not a matching chapter
+            if (!isMerged) {
+                return false
+            }
+
+            return scanlators.any { group -> group == sourceName }
+        }
+
+        /**
+         * returns true for a list filter, if the language of the chapter exists in the filtered
+         * language set
+         */
+        fun filterByLanguage(languages: List<String>, filteredLanguages: Set<String>): Boolean {
+            return when {
+                filteredLanguages.isEmpty() -> false
+                else -> {
+                    languages.any { language -> language in filteredLanguages }
+                }
+            }
+        }
+
+        /**
+         * returns true for a list filter, if the group of the chapter exists in the group set and
+         * the any filter is used. if the all filter is used then all the groups for the chapter
+         * need to be in the group set.
+         */
+        fun filterByScanlator(
+            scanlators: List<String>,
+            uploader: String,
+            all: Boolean,
+            filteredGroups: Set<String>,
+            filteredUploaders: Set<String> = emptySet(),
+        ): Boolean {
+            if (filteredGroups.isEmpty() && filteredUploaders.isEmpty()) return false
+
+            var nonMergeCount = 0
+            for (s in scanlators) {
+                if (s !in SourceManager.mergeSourceNames) {
+                    nonMergeCount++
+                }
+            }
+
+            if (nonMergeCount == 0 && uploader.isEmpty()) return false
+
+            var hasNoGroup = false
+            if (nonMergeCount > 0) {
+                for (s in scanlators) {
+                    if (s !in SourceManager.mergeSourceNames && s == Constants.NO_GROUP) {
+                        hasNoGroup = true
+                        break
+                    }
+                }
+            }
+
+            val needsUploaderCheck = uploader.isNotEmpty() && hasNoGroup
+
+            if (all) {
+                val skipNoGroup =
+                    uploader.isNotEmpty() && Constants.NO_GROUP !in filteredGroups && hasNoGroup
+
+                if (needsUploaderCheck) {
+                    val uploaderIsFiltered =
+                        uploader in filteredGroups || uploader in filteredUploaders
+                    if (!uploaderIsFiltered) return false
+                }
+
+                for (s in scanlators) {
+                    if (s in SourceManager.mergeSourceNames) continue
+                    if (s == Constants.NO_GROUP && skipNoGroup) continue
+
+                    val isFiltered =
+                        s in filteredGroups || (needsUploaderCheck && s in filteredUploaders)
+                    if (!isFiltered) return false
+                }
+                return true
+            } else {
+                if (needsUploaderCheck) {
+                    val uploaderIsFiltered =
+                        uploader in filteredGroups || uploader in filteredUploaders
+                    if (uploaderIsFiltered) return true
+                }
+
+                for (s in scanlators) {
+                    if (s in SourceManager.mergeSourceNames) continue
+                    val isFiltered =
+                        s in filteredGroups || (needsUploaderCheck && s in filteredUploaders)
+                    if (isFiltered) return true
+                }
+                return false
+            }
         }
     }
 }

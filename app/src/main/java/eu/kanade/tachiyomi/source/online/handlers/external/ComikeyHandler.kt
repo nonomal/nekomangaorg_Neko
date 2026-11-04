@@ -10,7 +10,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource.Companion.USER_AGENT
@@ -24,6 +23,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.nekomanga.core.network.GET
 import org.nekomanga.core.network.interceptor.rateLimit
+import tachiyomi.core.util.system.SecureWebViewClient
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -63,6 +63,10 @@ class ComikeyHandler {
             innerWv.settings.domStorageEnabled = true
             innerWv.settings.javaScriptEnabled = true
             innerWv.settings.blockNetworkImage = true
+            // Security: Disable file and content access to prevent potential local file
+            // exfiltration
+            innerWv.settings.allowFileAccess = false
+            innerWv.settings.allowContentAccess = false
             innerWv.settings.userAgentString = headers["User-Agent"]
             innerWv.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
             innerWv.addJavascriptInterface(jsInterface, interfaceName)
@@ -92,7 +96,7 @@ class ComikeyHandler {
             }*/
 
             innerWv.webViewClient =
-                object : WebViewClient() {
+                object : SecureWebViewClient() {
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                         super.onPageStarted(view, url, favicon)
                         view?.evaluateJavascript(
@@ -112,10 +116,11 @@ class ComikeyHandler {
                     ): WebResourceResponse? {
                         val url = request?.url ?: return super.shouldInterceptRequest(view, request)
 
-                        if (
-                            url.host != "relay-us.epub.rocks" ||
-                                url.path?.endsWith("/manifest") != true
-                        ) {
+                        if (url.scheme == "http") {
+                            return super.shouldInterceptRequest(view, request)
+                        }
+
+                        if (!isRelayManifest(url.host, url.path)) {
                             return super.shouldInterceptRequest(view, request)
                         }
 
@@ -137,7 +142,9 @@ class ComikeyHandler {
                                 ?: "application/divina+json+vnd.e4p.drm",
                             null,
                             response.code,
-                            response.message,
+                            // OkHttp leaves the message empty on HTTP/2 responses, and
+                            // WebResourceResponse throws on an empty reason phrase.
+                            "OK",
                             response.headers.toMap(),
                             response.body.byteStream(),
                         )
@@ -164,41 +171,11 @@ class ComikeyHandler {
             throw Exception(jsInterface.error)
         }
 
-        val manifestUrl = jsInterface.manifestUrl!!
-        val manifest = jsInterface.manifest!!
-        val webtoon = manifest.metadata.readingProgression == "ttb"
-
-        return manifest.readingOrder.mapIndexed { i, it ->
-            val url =
-                manifestUrl
-                    .newBuilder()
-                    .apply {
-                        removePathSegment(manifestUrl.pathSize - 1)
-
-                        if (
-                            it.alternate.isNotEmpty() &&
-                                it.height == 2048 &&
-                                it.type == "image/jpeg"
-                        ) {
-                            addPathSegments(
-                                it.alternate
-                                    .first {
-                                        val dimension = if (webtoon) it.width else it.height
-
-                                        dimension <= 1536 && it.type == "image/webp"
-                                    }
-                                    .href,
-                            )
-                        } else {
-                            addPathSegments(it.href)
-                        }
-
-                        addQueryParameter("act", jsInterface.act)
-                    }
-                    .toString()
-
-            Page(i, imageUrl = url)
-        }
+        return pageListFromManifest(
+            jsInterface.manifest!!,
+            jsInterface.manifestUrl!!,
+            jsInterface.act,
+        )
     }
 
     private val webviewScript =
@@ -252,7 +229,7 @@ class ComikeyHandler {
                         const manifest = JSON.parse(document.querySelector("#lmao-init").textContent).manifest;
                         window.__interface__.passPayload(manifest, act, await e.detail);
                     } catch (e) {
-                        window.__interface__.passError("Unknown error");
+                        window.__interface__.passError(e.message || e.name || "Unknown error");
                     }
                 },
                 { once: true },
@@ -271,10 +248,7 @@ class ComikeyHandler {
         }
     }
 
-    private class JsInterface(
-        private val latch: CountDownLatch,
-        private val json: Json,
-    ) {
+    private class JsInterface(private val latch: CountDownLatch, private val json: Json) {
         var manifest: ComikeyEpisodeManifest? = null
             private set
 
@@ -313,10 +287,7 @@ class ComikeyHandler {
         val readingOrder: List<ComikeyPage>,
     )
 
-    @Serializable
-    data class ComikeyEpisodeManifestMetadata(
-        val readingProgression: String,
-    )
+    @Serializable data class ComikeyEpisodeManifestMetadata(val readingProgression: String)
 
     @Serializable
     data class ComikeyPage(
@@ -324,8 +295,11 @@ class ComikeyHandler {
         val type: String,
         val height: Int,
         val width: Int,
-        val alternate: List<ComikeyAlternatePage>,
-    )
+        val alternate: List<ComikeyAlternatePage> = emptyList(),
+    ) {
+        val variants: List<ComikeyAlternatePage>
+            get() = listOf(ComikeyAlternatePage(href, type, height, width)) + alternate
+    }
 
     @Serializable
     data class ComikeyAlternatePage(
@@ -333,5 +307,47 @@ class ComikeyHandler {
         val type: String,
         val height: Int,
         val width: Int,
-    )
+    ) {
+        fun dimension(webtoon: Boolean) = if (webtoon) width else height
+    }
+
+    companion object {
+        private val RELAY_HOST_REGEX =
+            Regex("""relay-\w+\.(epub\.rocks|comikey\.com)""", RegexOption.IGNORE_CASE)
+
+        internal fun isRelayManifest(host: String?, path: String?): Boolean =
+            host?.matches(RELAY_HOST_REGEX) == true && path?.endsWith("/manifest") == true
+
+        internal fun pageListFromManifest(
+            manifest: ComikeyEpisodeManifest,
+            manifestUrl: HttpUrl,
+            act: String,
+        ): List<Page> {
+            val webtoon = manifest.metadata.readingProgression == "ttb"
+
+            return manifest.readingOrder.mapIndexed { i, page ->
+                val href =
+                    page.variants
+                        .filter { it.type == "image/webp" }
+                        .maxByOrNull { it.dimension(webtoon) }
+                        ?.href ?: page.href
+                val imageUrl =
+                    requireNotNull(manifestUrl.resolve(href)) { "Invalid Comikey page link" }
+                // Page links carry their own signed query; the manifest query is only a fallback.
+                val resolvedUrl =
+                    imageUrl
+                        .newBuilder()
+                        .encodedQuery(imageUrl.encodedQuery ?: manifestUrl.encodedQuery)
+                        .build()
+                val url =
+                    if (resolvedUrl.queryParameter("act") == null && act.isNotBlank()) {
+                        resolvedUrl.newBuilder().addQueryParameter("act", act).build()
+                    } else {
+                        resolvedUrl
+                    }
+
+                Page(i, imageUrl = url.toString())
+            }
+        }
+    }
 }

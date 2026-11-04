@@ -1,0 +1,244 @@
+package org.nekomanga.presentation.screens.feed
+
+import androidx.annotation.StringRes
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenu
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import jp.wasabeef.gap.Gap
+import org.nekomanga.R
+import org.nekomanga.domain.feed.FeedHistoryGroup
+import org.nekomanga.presentation.components.sheets.BaseSheet
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.components.theme.defaultThemeColorState
+import org.nekomanga.presentation.theme.Size
+
+@Composable
+fun FeedBottomSheet(
+    feedScreenType: FeedScreenType,
+    downloadScreenVisible: Boolean,
+    downloadOnlyOnUnmetered: Boolean,
+    historyGrouping: FeedHistoryGroup,
+    sortByFetched: Boolean,
+    outlineCovers: Boolean,
+    outlineCards: Boolean,
+    swipeRefreshEnabled: Boolean,
+    groupUpdateChapters: Boolean,
+    toggleGroupUpdateChapters: () -> Unit,
+    sortClick: () -> Unit,
+    outlineCardsClick: () -> Unit,
+    outlineCoversClick: () -> Unit,
+    groupHistoryClick: (FeedHistoryGroup) -> Unit,
+    clearHistoryClick: () -> Unit,
+    clearDownloadsClick: () -> Unit,
+    toggleDownloadOnUnmetered: () -> Unit,
+    toggleSwipeRefresh: () -> Unit,
+    themeColorState: ThemeColorState = defaultThemeColorState(),
+) {
+
+    BaseSheet(themeColor = themeColorState, maxSheetHeightPercentage = .6f) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Size.medium),
+            verticalArrangement = Arrangement.spacedBy(Size.small),
+        ) {
+            when {
+                downloadScreenVisible ->
+                    DownloadsContent(
+                        clearDownloadsClick = clearDownloadsClick,
+                        downloadOnlyOnUnmetered = downloadOnlyOnUnmetered,
+                        toggleDownloadOnUnmetered = toggleDownloadOnUnmetered,
+                    )
+                feedScreenType == FeedScreenType.History ->
+                    HistoryContent(
+                        historyGrouping = historyGrouping,
+                        outlineCovers = outlineCovers,
+                        outlineCards = outlineCards,
+                        outlineCoversClick = outlineCoversClick,
+                        outlineCardsClick = outlineCardsClick,
+                        groupHistoryClick = groupHistoryClick,
+                        clearHistoryClick = clearHistoryClick,
+                        swipeRefreshEnabled = swipeRefreshEnabled,
+                        toggleSwipeRefresh = toggleSwipeRefresh,
+                    )
+                feedScreenType == FeedScreenType.Updates ->
+                    UploadsContent(
+                        fetchSort = sortByFetched,
+                        outlineCovers = outlineCovers,
+                        sortClick = sortClick,
+                        groupUpdateChapters = groupUpdateChapters,
+                        toggleGroupUpdateChapters = toggleGroupUpdateChapters,
+                        outlineCoversClick = outlineCoversClick,
+                        swipeRefreshEnabled = swipeRefreshEnabled,
+                        toggleSwipeRefresh = toggleSwipeRefresh,
+                    )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryContent(
+    historyGrouping: FeedHistoryGroup,
+    outlineCovers: Boolean,
+    outlineCards: Boolean,
+    swipeRefreshEnabled: Boolean,
+    toggleSwipeRefresh: () -> Unit,
+    outlineCoversClick: () -> Unit,
+    outlineCardsClick: () -> Unit,
+    groupHistoryClick: (FeedHistoryGroup) -> Unit,
+    clearHistoryClick: () -> Unit,
+) {
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(id = R.string.group_chapters_together),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        var expanded by remember { mutableStateOf(false) }
+        var selectedText =
+            when (historyGrouping) {
+                FeedHistoryGroup.No -> R.string.group_no
+                FeedHistoryGroup.Series -> R.string.group_by_series
+                FeedHistoryGroup.Day -> R.string.group_by_day
+                FeedHistoryGroup.Week -> R.string.group_by_week
+            }
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            modifier =
+                Modifier.padding(
+                    start = Size.small,
+                    top = Size.small,
+                    bottom = Size.small,
+                    end = Size.none,
+                ),
+            onExpandedChange = { expanded = !expanded },
+        ) {
+            TextField(
+                value = stringResource(id = selectedText),
+                onValueChange = {},
+                textStyle = MaterialTheme.typography.bodyMedium,
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                FeedHistoryGroup.entries.forEach { entry ->
+                    val textRes =
+                        when (entry) {
+                            FeedHistoryGroup.No -> R.string.group_no
+                            FeedHistoryGroup.Series -> R.string.group_by_series
+                            FeedHistoryGroup.Day -> R.string.group_by_day
+                            FeedHistoryGroup.Week -> R.string.group_by_week
+                        }
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = stringResource(id = textRes),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        },
+                        onClick = {
+                            selectedText = textRes
+                            expanded = false
+                            groupHistoryClick(entry)
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    SwitchRow(R.string.show_outline_around_covers, outlineCovers, outlineCoversClick)
+    SwitchRow(R.string.show_outline_around_cards, outlineCards, outlineCardsClick)
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        TextButton(onClick = clearHistoryClick) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Outlined.DeleteForever, contentDescription = null)
+                Text(text = stringResource(id = R.string.clear_history))
+            }
+        }
+    }
+
+    SwitchRow(R.string.feed_swipe_refresh_enabled, swipeRefreshEnabled, toggleSwipeRefresh)
+}
+
+@Composable
+private fun DownloadsContent(
+    clearDownloadsClick: () -> Unit,
+    downloadOnlyOnUnmetered: Boolean,
+    toggleDownloadOnUnmetered: () -> Unit,
+) {
+
+    SwitchRow(
+        textRes = R.string.only_download_over_unmetered,
+        downloadOnlyOnUnmetered,
+        toggleDownloadOnUnmetered,
+    )
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        TextButton(onClick = clearDownloadsClick) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Outlined.DeleteSweep, contentDescription = null)
+                Gap(Size.small)
+                Text(text = stringResource(id = R.string.clear_download_queue))
+            }
+        }
+    }
+}
+
+@Composable
+private fun UploadsContent(
+    fetchSort: Boolean,
+    outlineCovers: Boolean,
+    groupUpdateChapters: Boolean,
+    toggleGroupUpdateChapters: () -> Unit,
+    sortClick: () -> Unit,
+    outlineCoversClick: () -> Unit,
+    swipeRefreshEnabled: Boolean,
+    toggleSwipeRefresh: () -> Unit,
+) {
+    SwitchRow(R.string.sort_fetched_time, fetchSort, sortClick)
+    SwitchRow(R.string.show_outline_around_covers, outlineCovers, outlineCoversClick)
+    SwitchRow(R.string.group_chapters_together, groupUpdateChapters, toggleGroupUpdateChapters)
+    SwitchRow(R.string.feed_swipe_refresh_enabled, swipeRefreshEnabled, toggleSwipeRefresh)
+}
+
+@Composable
+private fun SwitchRow(@StringRes textRes: Int, checked: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = stringResource(id = textRes), style = MaterialTheme.typography.bodyMedium)
+        Switch(checked = checked, onCheckedChange = { onClick() })
+    }
+}

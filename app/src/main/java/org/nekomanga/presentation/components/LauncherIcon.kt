@@ -2,7 +2,6 @@ package org.nekomanga.presentation.components
 
 import android.graphics.Bitmap
 import android.graphics.drawable.AdaptiveIconDrawable
-import android.os.Build
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.requiredSize
@@ -23,14 +22,14 @@ fun LauncherIcon(size: Dp) {
     ResourcesCompat.getDrawable(
             LocalContext.current.resources,
             R.mipmap.ic_launcher,
-            LocalContext.current.theme
+            LocalContext.current.theme,
         )
         ?.let { drawable ->
             val bitmap =
                 Bitmap.createBitmap(
                     drawable.intrinsicWidth,
                     drawable.intrinsicHeight,
-                    Bitmap.Config.ARGB_8888
+                    Bitmap.Config.ARGB_8888,
                 )
             val canvas = android.graphics.Canvas(bitmap)
             drawable.setBounds(0, 0, canvas.width, canvas.height)
@@ -38,7 +37,7 @@ fun LauncherIcon(size: Dp) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = null,
-                modifier = Modifier.requiredSize(size)
+                modifier = Modifier.requiredSize(size),
             )
         }
 }
@@ -48,18 +47,13 @@ fun adaptiveIconPainterResource(@DrawableRes id: Int): Painter {
     val res = LocalContext.current.resources
     val theme = LocalContext.current.theme
 
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        // Android O supports adaptive icons, try loading this first (even though this is least
-        // likely to be the format).
-        val adaptiveIcon = ResourcesCompat.getDrawable(res, id, theme) as? AdaptiveIconDrawable
-        if (adaptiveIcon != null) {
-            BitmapPainter(adaptiveIcon.toBitmap().asImageBitmap())
-        } else {
-            // We couldn't load the drawable as an Adaptive Icon, just use painterResource
-            painterResource(id)
-        }
+    // Android O supports adaptive icons, try loading this first (even though this is least
+    // likely to be the format).
+    val adaptiveIcon = ResourcesCompat.getDrawable(res, id, theme) as? AdaptiveIconDrawable
+    return if (adaptiveIcon != null) {
+        BitmapPainter(adaptiveIcon.toBitmap().asImageBitmap())
     } else {
-        // We're not on Android O or later, just use painterResource
+        // We couldn't load the drawable as an Adaptive Icon, just use painterResource
         painterResource(id)
     }
 }

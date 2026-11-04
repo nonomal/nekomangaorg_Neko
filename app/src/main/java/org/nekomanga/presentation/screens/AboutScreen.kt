@@ -1,11 +1,16 @@
 package org.nekomanga.presentation.screens
 
-import ToolTipButton
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -13,13 +18,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberTopAppBarState
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -27,164 +35,355 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import compose.icons.SimpleIcons
-import compose.icons.simpleicons.Discord
-import compose.icons.simpleicons.Github
-import eu.kanade.presentation.components.PreferenceRow
+import androidx.core.content.getSystemService
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
+import eu.kanade.tachiyomi.crash.CrashReportText
 import eu.kanade.tachiyomi.data.updater.AppUpdateResult
+import eu.kanade.tachiyomi.data.updater.LATEST_COMMIT_URL
 import eu.kanade.tachiyomi.data.updater.RELEASE_URL
-import eu.kanade.tachiyomi.ui.more.about.AboutScreenState
+import eu.kanade.tachiyomi.data.updater.REPO_URL
+import eu.kanade.tachiyomi.data.updater.Release
+import eu.kanade.tachiyomi.ui.main.ObserveAsEvents
 import eu.kanade.tachiyomi.util.system.isOnline
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import org.nekomanga.BuildConfig
 import org.nekomanga.R
-import org.nekomanga.domain.snackbar.SnackbarState
-import org.nekomanga.presentation.components.NekoScaffold
-import org.nekomanga.presentation.components.NekoScaffoldType
+import org.nekomanga.constants.Constants.DISCORD_URL
+import org.nekomanga.constants.Constants.PRIVACY_POLICY_URL
+import org.nekomanga.presentation.components.ToolTipButton
 import org.nekomanga.presentation.components.dialog.AppUpdateDialog
-import org.nekomanga.presentation.components.snackbar.snackbarHost
+import org.nekomanga.presentation.components.icons.DiscordIcon
+import org.nekomanga.presentation.components.icons.GithubIcon
+import org.nekomanga.presentation.components.listcard.ExpressiveListCard
+import org.nekomanga.presentation.components.listcard.ListCardType
+import org.nekomanga.presentation.components.scaffold.ChildScreenScaffold
+import org.nekomanga.presentation.components.snackbar.NekoSnackbarHost
+import org.nekomanga.presentation.screens.about.AboutScreenState
+import org.nekomanga.presentation.screens.about.AboutTopAppBar
+import org.nekomanga.presentation.screens.about.AboutViewModel
+import org.nekomanga.presentation.screens.settings.widgets.TextPreferenceWidget
 import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun AboutScreen(
-    aboutScreenState: State<AboutScreenState>,
-    checkForUpdate: (Context) -> Unit,
-    onVersionClicked: (Context) -> Unit,
-    onDownloadClicked: (String) -> Unit,
-    onClickLicenses: () -> Unit,
+    aboutViewModel: AboutViewModel,
+    windowSizeClass: WindowSizeClass,
     onBackPressed: () -> Unit,
-    dismissDialog: () -> Unit,
-    snackbar: SharedFlow<SnackbarState>,
+    onNavigateTo: (NavKey) -> Unit,
 ) {
-    val uriHandler = LocalUriHandler.current
+
+    val screenState by aboutViewModel.aboutScreenState.collectAsStateWithLifecycle()
+
     val context = LocalContext.current
+
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    NekoScaffold(
-        title = stringResource(id = R.string.about),
-        type = NekoScaffoldType.Title,
-        onNavigationIconClicked = onBackPressed,
-        snackBarHost = snackbarHost(snackbarHostState),
-    ) { contentPadding ->
-        LaunchedEffect(snackbarHostState.currentSnackbarData) {
-            snackbar.collect { state ->
-                scope.launch {
-                    snackbarHostState.currentSnackbarData?.dismiss()
-                    val result =
-                        snackbarHostState.showSnackbar(
-                            message = state.getFormattedMessage(context),
-                            actionLabel = state.getFormattedActionLabel(context),
-                            withDismissAction = true,
-                        )
-                    when (result) {
-                        SnackbarResult.ActionPerformed -> state.action?.invoke()
-                        SnackbarResult.Dismissed -> state.dismissAction?.invoke()
-                    }
-                }
-            }
+    // Re-implementation of ObserveAsEvents from MainActivity
+    ObserveAsEvents(flow = aboutViewModel.appSnackbarManager.events, snackbarHostState) { event ->
+        scope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result =
+                snackbarHostState.showSnackbar(
+                    message = event.getFormattedMessage(context),
+                    actionLabel = event.getFormattedActionLabel(context),
+                    duration = event.snackbarDuration,
+                    withDismissAction = true,
+                )
+            // We don't need to handle the result for AboutScreen's snackbars
         }
+    }
 
+    AboutWrapper(
+        aboutScreenState = screenState,
+        notOnlineSnackbar = aboutViewModel::notOnlineSnackbar,
+        checkForUpdate = aboutViewModel::checkForUpdate,
+        windowSizeClass = windowSizeClass,
+        onVersionClicked = { aboutViewModel.onVersionClicked() },
+        onVersionLongClicked = { context ->
+            aboutViewModel.onVersionLongClicked()
+            val deviceInfo = CrashReportText.debugInfo()
+            val clipboard = context.getSystemService<ClipboardManager>()!!
+            val appInfo = context.getString(R.string.app_info)
+            clipboard.setPrimaryClip(ClipData.newPlainText(appInfo, deviceInfo))
+        },
+        onDownloadClicked = { release ->
+            aboutViewModel.hideUpdateDialog()
+            aboutViewModel.downloadUpdate(release)
+        },
+        onClickLicenses = { onNavigateTo(Screens.License) },
+        onBackPressed = onBackPressed,
+        dismissDialog = aboutViewModel::hideUpdateDialog,
+        snackbarHost = { NekoSnackbarHost(snackbarHostState = snackbarHostState) },
+    )
+}
+
+@Composable
+private fun AboutWrapper(
+    aboutScreenState: AboutScreenState,
+    windowSizeClass: WindowSizeClass,
+    notOnlineSnackbar: () -> Unit,
+    checkForUpdate: () -> Unit,
+    onVersionClicked: () -> Unit,
+    onVersionLongClicked: (Context) -> Unit,
+    onDownloadClicked: (Release) -> Unit,
+    onClickLicenses: () -> Unit,
+    onBackPressed: () -> Unit,
+    dismissDialog: () -> Unit,
+    snackbarHost: @Composable () -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
+
+    ChildScreenScaffold(
+        scrollBehavior = scrollBehavior,
+        snackbarHost = snackbarHost,
+        topBar = {
+            AboutTopAppBar(
+                incognitoMode = aboutScreenState.incognitoMode,
+                scrollBehavior = scrollBehavior,
+                onNavigationClicked = onBackPressed,
+            )
+        },
+    ) { contentPadding ->
         if (
-            aboutScreenState.value.shouldShowUpdateDialog &&
-                aboutScreenState.value.updateResult is AppUpdateResult.NewUpdate
+            aboutScreenState.shouldShowUpdateDialog &&
+                aboutScreenState.updateResult is AppUpdateResult.NewUpdate
         ) {
             AppUpdateDialog(
-                release =
-                    (aboutScreenState.value.updateResult as AppUpdateResult.NewUpdate).release,
+                release = aboutScreenState.updateResult.release,
                 onDismissRequest = dismissDialog,
                 onConfirm = onDownloadClicked,
             )
         }
 
-        LazyColumn(contentPadding = contentPadding) {
-            item { LogoHeader() }
-            item { Spacer(modifier = Modifier.size(Size.large)) }
-            item {
-                PreferenceRow(
-                    title = stringResource(R.string.version),
-                    subtitle =
-                        when {
-                            BuildConfig.DEBUG -> {
-                                "Debug ${BuildConfig.COMMIT_SHA} (${aboutScreenState.value.buildTime})"
-                            }
-                            else -> {
-                                "Stable ${BuildConfig.VERSION_NAME} (${aboutScreenState.value.buildTime})"
-                            }
-                        },
-                    onClick = { onVersionClicked(context) },
-                )
-            }
+        val isTablet = windowSizeClass.widthSizeClass == WindowWidthSizeClass.Expanded
 
-            item {
-                PreferenceRow(
-                    title = stringResource(R.string.check_for_updates),
-                    onClick = {
-                        if (!context.isOnline()) {
-                            scope.launch {
-                                snackbarHostState.showSnackbar(
-                                    context.getString(R.string.no_network_connection),
-                                    withDismissAction = true,
-                                )
-                            }
-                        } else {
-                            checkForUpdate(context)
-                        }
-                    },
-                )
-            }
-            item {
-                PreferenceRow(
-                    title = stringResource(R.string.whats_new),
-                    onClick = {
-                        val url =
-                            if (BuildConfig.DEBUG) {
-                                "https://github.com/nekomangaorg/Neko/commits/master"
-                            } else {
-                                RELEASE_URL
-                            }
-                        uriHandler.openUri(url)
-                    },
-                )
-            }
-
-            item {
-                PreferenceRow(
-                    title = stringResource(R.string.open_source_licenses),
-                    onClick = onClickLicenses,
-                )
-            }
-
-            item {
-                PreferenceRow(
-                    title = stringResource(R.string.privacy_policy),
-                    onClick = {
-                        uriHandler.openUri("https://github.com/nekomangaorg/privacy_policy")
-                    },
-                )
-            }
-            item { Spacer(modifier = Modifier.size(16.dp)) }
-
-            item {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth().padding(Size.medium),
-                    horizontalArrangement = Arrangement.Center,
+        if (isTablet) {
+            Row(
+                modifier = Modifier.fillMaxSize().padding(contentPadding),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    modifier = Modifier.weight(0.45f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    val modifier = Modifier.size(Size.extraLarge)
-                    LinkIcon(
-                        label = "Discord",
-                        modifier = modifier,
-                        icon = SimpleIcons.Discord,
-                        url = "https://discord.gg/4vmK42QuKG",
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_neko_yokai),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(Size.extraExtraHuge * 3),
+                        contentDescription = null,
                     )
-                    LinkIcon(
-                        modifier = modifier,
-                        label = "GitHub",
-                        icon = SimpleIcons.Github,
-                        url = "https://nekomanga.org/",
+                    Spacer(modifier = Modifier.size(Size.large))
+                    Text(
+                        text = stringResource(R.string.app_name),
+                        style =
+                            MaterialTheme.typography.headlineMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
+                    Spacer(modifier = Modifier.size(Size.medium))
+                    Row(
+                        horizontalArrangement =
+                            Arrangement.spacedBy(Size.medium, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val iconModifier = Modifier.size(Size.extraLarge)
+                        LinkIcon(
+                            label = "Discord",
+                            modifier = iconModifier,
+                            icon = DiscordIcon,
+                            url = DISCORD_URL,
+                        )
+                        LinkIcon(
+                            modifier = iconModifier,
+                            label = "GitHub",
+                            icon = GithubIcon,
+                            url = REPO_URL,
+                        )
+                    }
+                }
+
+                LazyColumn(
+                    modifier =
+                        Modifier.weight(0.55f).fillMaxHeight().padding(horizontal = Size.medium),
+                    verticalArrangement =
+                        Arrangement.spacedBy(Size.tiny, Alignment.CenterVertically),
+                ) {
+                    item {
+                        ExpressiveListCard(listCardType = ListCardType.Top) {
+                            TextPreferenceWidget(
+                                title = stringResource(R.string.version),
+                                subtitle =
+                                    when {
+                                        BuildConfig.DEBUG -> {
+                                            "Debug ${BuildConfig.COMMIT_SHA} (${aboutScreenState.buildTime})"
+                                        }
+
+                                        else -> {
+                                            "Stable ${BuildConfig.VERSION_NAME} (${aboutScreenState.buildTime})"
+                                        }
+                                    },
+                                onPreferenceClick = { onVersionClicked() },
+                                onPreferenceLongClick = { onVersionLongClicked(context) },
+                            )
+                        }
+                    }
+
+                    item {
+                        ExpressiveListCard(listCardType = ListCardType.Center) {
+                            TextPreferenceWidget(
+                                title = stringResource(R.string.check_for_updates),
+                                onPreferenceClick = {
+                                    if (!context.isOnline()) {
+                                        notOnlineSnackbar()
+                                    } else {
+                                        checkForUpdate()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    item {
+                        ExpressiveListCard(listCardType = ListCardType.Center) {
+                            TextPreferenceWidget(
+                                title = stringResource(R.string.whats_new),
+                                onPreferenceClick = {
+                                    val url =
+                                        if (BuildConfig.DEBUG) {
+                                            LATEST_COMMIT_URL
+                                        } else {
+                                            RELEASE_URL
+                                        }
+                                    uriHandler.openUri(url)
+                                },
+                            )
+                        }
+                    }
+
+                    item {
+                        ExpressiveListCard(listCardType = ListCardType.Center) {
+                            TextPreferenceWidget(
+                                title = stringResource(R.string.open_source_licenses),
+                                onPreferenceClick = onClickLicenses,
+                            )
+                        }
+                    }
+
+                    item {
+                        ExpressiveListCard(listCardType = ListCardType.Bottom) {
+                            TextPreferenceWidget(
+                                title = stringResource(R.string.privacy_policy),
+                                onPreferenceClick = { uriHandler.openUri(PRIVACY_POLICY_URL) },
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                contentPadding = contentPadding,
+                modifier = Modifier.padding(horizontal = Size.medium),
+                verticalArrangement = Arrangement.spacedBy(Size.tiny),
+            ) {
+                item { LogoHeader() }
+                item { Spacer(modifier = Modifier.size(Size.large)) }
+                item {
+                    ExpressiveListCard(listCardType = ListCardType.Top) {
+                        TextPreferenceWidget(
+                            title = stringResource(R.string.version),
+                            subtitle =
+                                when {
+                                    BuildConfig.DEBUG -> {
+                                        "Debug ${BuildConfig.COMMIT_SHA} (${aboutScreenState.buildTime})"
+                                    }
+
+                                    else -> {
+                                        "Stable ${BuildConfig.VERSION_NAME} (${aboutScreenState.buildTime})"
+                                    }
+                                },
+                            onPreferenceClick = { onVersionClicked() },
+                            onPreferenceLongClick = { onVersionLongClicked(context) },
+                        )
+                    }
+                }
+
+                item {
+                    ExpressiveListCard(listCardType = ListCardType.Center) {
+                        TextPreferenceWidget(
+                            title = stringResource(R.string.check_for_updates),
+                            onPreferenceClick = {
+                                if (!context.isOnline()) {
+                                    notOnlineSnackbar()
+                                } else {
+                                    checkForUpdate()
+                                }
+                            },
+                        )
+                    }
+                }
+                item {
+                    ExpressiveListCard(listCardType = ListCardType.Center) {
+                        TextPreferenceWidget(
+                            title = stringResource(R.string.whats_new),
+                            onPreferenceClick = {
+                                val url =
+                                    if (BuildConfig.DEBUG) {
+                                        LATEST_COMMIT_URL
+                                    } else {
+                                        RELEASE_URL
+                                    }
+                                uriHandler.openUri(url)
+                            },
+                        )
+                    }
+                }
+
+                item {
+                    ExpressiveListCard(listCardType = ListCardType.Center) {
+                        TextPreferenceWidget(
+                            title = stringResource(R.string.open_source_licenses),
+                            onPreferenceClick = onClickLicenses,
+                        )
+                    }
+                }
+
+                item {
+                    ExpressiveListCard(listCardType = ListCardType.Bottom) {
+                        TextPreferenceWidget(
+                            title = stringResource(R.string.privacy_policy),
+                            onPreferenceClick = { uriHandler.openUri(PRIVACY_POLICY_URL) },
+                        )
+                    }
+                }
+
+                item {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth().padding(Size.medium),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        val modifier = Modifier.size(Size.extraLarge)
+                        LinkIcon(
+                            label = "Discord",
+                            modifier = modifier,
+                            icon = DiscordIcon,
+                            url = DISCORD_URL,
+                        )
+                        LinkIcon(
+                            modifier = modifier,
+                            label = "GitHub",
+                            icon = GithubIcon,
+                            url = REPO_URL,
+                        )
+                    }
                 }
             }
         }
@@ -193,17 +392,16 @@ fun AboutScreen(
 
 @Composable
 private fun LogoHeader() {
-    Column {
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(top = 30.dp),
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.ic_neko_yokai),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(200.dp),
-                contentDescription = null,
-            )
-        }
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(top = Size.huge),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(id = R.drawable.ic_neko_yokai),
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(Size.extraExtraHuge * 2),
+            contentDescription = null,
+        )
     }
 }
 
@@ -223,6 +421,6 @@ private fun LinkIcon(
         icon = icon,
         painter = painter,
         enabledTint = MaterialTheme.colorScheme.primary.copy(alpha = .7f),
-        buttonClicked = { uriHandler.openUri(url) },
+        onClick = { uriHandler.openUri(url) },
     )
 }

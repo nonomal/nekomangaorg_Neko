@@ -1,41 +1,31 @@
 package org.nekomanga.presentation.screens
 
-import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.graphics.drawable.Drawable
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
+import androidx.annotation.StringRes
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.LocalTextSelectionColors
-import androidx.compose.foundation.text.selection.TextSelectionColors
-import androidx.compose.material.ModalBottomSheetLayout
-import androidx.compose.material.ModalBottomSheetValue
-import androidx.compose.material.rememberModalBottomSheetState
-import androidx.compose.material.ripple.LocalRippleTheme
-import androidx.compose.material.ripple.RippleTheme
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.material3.windowsizeclass.WindowSizeClass
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,10 +37,16 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.state.ToggleableState
+import androidx.core.content.getSystemService
 import androidx.core.graphics.ColorUtils
-import eu.kanade.presentation.components.VerticalDivider
+import androidx.core.graphics.drawable.toBitmap
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
+import androidx.palette.graphics.Palette
+import eu.kanade.tachiyomi.data.database.models.uuid
+import eu.kanade.tachiyomi.ui.main.ObserveAsEvents
+import eu.kanade.tachiyomi.ui.main.states.RefreshState
 import eu.kanade.tachiyomi.ui.manga.MangaConstants
 import eu.kanade.tachiyomi.ui.manga.MangaConstants.CategoryActions
 import eu.kanade.tachiyomi.ui.manga.MangaConstants.ChapterActions
@@ -58,377 +54,794 @@ import eu.kanade.tachiyomi.ui.manga.MangaConstants.ChapterFilterActions
 import eu.kanade.tachiyomi.ui.manga.MangaConstants.CoverActions
 import eu.kanade.tachiyomi.ui.manga.MangaConstants.DescriptionActions
 import eu.kanade.tachiyomi.ui.manga.MangaConstants.InformationActions
-import eu.kanade.tachiyomi.ui.manga.MangaConstants.MangaScreenGeneralState
 import eu.kanade.tachiyomi.ui.manga.MangaConstants.MergeActions
 import eu.kanade.tachiyomi.ui.manga.MangaConstants.TrackActions
-import eu.kanade.tachiyomi.util.system.openInWebView
+import eu.kanade.tachiyomi.ui.manga.MangaViewModel
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.source.latest.DisplayScreenType
+import eu.kanade.tachiyomi.util.chapter.isAvailable
+import eu.kanade.tachiyomi.util.lang.orUnknownError
+import eu.kanade.tachiyomi.util.manga.getSlug
+import eu.kanade.tachiyomi.util.storage.getUriWithAuthority
+import eu.kanade.tachiyomi.util.system.getBestColor
+import eu.kanade.tachiyomi.util.system.openInBrowser
+import eu.kanade.tachiyomi.util.system.sharedCacheDir
+import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.system.withUIContext
 import java.text.DateFormat
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.nekomanga.R
+import org.nekomanga.constants.MdConstants
 import org.nekomanga.domain.chapter.ChapterItem
-import org.nekomanga.domain.snackbar.SnackbarState
-import org.nekomanga.presentation.components.ChapterRow
-import org.nekomanga.presentation.components.DynamicRippleTheme
-import org.nekomanga.presentation.components.NekoScaffold
-import org.nekomanga.presentation.components.NekoScaffoldType
-import org.nekomanga.presentation.components.PrimaryColorRippleTheme
-import org.nekomanga.presentation.components.PullRefresh
+import org.nekomanga.domain.chapter.ChapterMarkActions
+import org.nekomanga.domain.snackbar.SnackbarColor
+import org.nekomanga.presentation.components.NekoColors
+import org.nekomanga.presentation.components.UiText
+import org.nekomanga.presentation.components.VerticalDivider
+import org.nekomanga.presentation.components.VerticalFastScroller
 import org.nekomanga.presentation.components.dialog.RemovedChaptersDialog
 import org.nekomanga.presentation.components.dynamicTextSelectionColor
-import org.nekomanga.presentation.components.snackbar.snackbarHost
-import org.nekomanga.presentation.screens.mangadetails.ChapterHeader
-import org.nekomanga.presentation.screens.mangadetails.DetailsBottomSheet
-import org.nekomanga.presentation.screens.mangadetails.DetailsBottomSheetScreen
-import org.nekomanga.presentation.screens.mangadetails.MangaDetailsHeader
-import org.nekomanga.presentation.screens.mangadetails.OverflowOptions
-import org.nekomanga.presentation.theme.Shapes
+import org.nekomanga.presentation.components.nekoRippleConfiguration
+import org.nekomanga.presentation.components.scaffold.ChildScreenScaffold
+import org.nekomanga.presentation.components.snackbar.NekoSnackbarHost
+import org.nekomanga.presentation.components.snackbar.showSnackbarEvent
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.components.theme.defaultThemeColorState
+import org.nekomanga.presentation.extensions.surfaceColorAtElevationCustomColor
+import org.nekomanga.presentation.screens.manga.ChapterHeader
+import org.nekomanga.presentation.screens.manga.DetailsBottomSheet
+import org.nekomanga.presentation.screens.manga.DetailsBottomSheetScreen
+import org.nekomanga.presentation.screens.manga.MangaChapterListItem
+import org.nekomanga.presentation.screens.manga.MangaDetailsHeader
+import org.nekomanga.presentation.screens.manga.MangaScreenTopBar
 import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun MangaScreen(
-    generalState: State<MangaScreenGeneralState>,
-    mangaState: State<MangaConstants.MangaScreenMangaState>,
-    trackMergeState: State<MangaConstants.MangaScreenTrackMergeState>,
+    mangaViewModel: MangaViewModel,
     windowSizeClass: WindowSizeClass,
-    snackbar: SharedFlow<SnackbarState>,
-    isRefreshing: State<Boolean>,
-    isSearching: State<Boolean>,
+    onBackPressed: () -> Unit,
+    onNavigate: (NavKey) -> Unit,
+    onSearchLibrary: (String) -> Unit,
+    onSearchMangaDex: (DisplayScreenType) -> Unit,
+) {
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val openWebView: (String, String) -> Unit = { url, title ->
+        if (mangaViewModel.openLinksInBrowser()) {
+            context.openInBrowser(url, forceDefaultBrowser = true)
+        } else {
+            onNavigate(Screens.WebView(title = title, url = url))
+        }
+    }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Re-implementation of ObserveAsEvents from MainActivity
+    ObserveAsEvents(flow = mangaViewModel.appSnackbarManager.events, snackbarHostState) { event ->
+        scope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbarEvent(
+                event = event,
+                message = event.getFormattedMessage(context),
+                actionLabel = event.getFormattedActionLabel(context),
+            )
+        }
+    }
+
+    val screenState by mangaViewModel.mangaDetailScreenState.collectAsStateWithLifecycle()
+
+    MangaScreenWrapper(
+        screenState = screenState,
+        windowSizeClass = windowSizeClass,
+        onRefresh = mangaViewModel::onRefresh,
+        onSearch = mangaViewModel::onSearch,
+        updateSnackbarColor = mangaViewModel::updateSnackbarColor,
+        snackbarHost = {
+            NekoSnackbarHost(
+                snackbarHostState = snackbarHostState,
+                snackbarColor = screenState.general.snackbarColor,
+            )
+        },
+        categoryActions =
+            CategoryActions(
+                set = { enabledCategories ->
+                    mangaViewModel.updateMangaCategories(enabledCategories)
+                },
+                addNew = { newCategory -> mangaViewModel.addNewCategory(newCategory) },
+            ),
+        informationActions =
+            InformationActions(
+                titleLongClick = {
+                    mangaViewModel.copiedToClipboard(it)
+                    copyToClipboard(context, it, R.string.title)
+                },
+                creatorCopy = {
+                    mangaViewModel.copiedToClipboard(it)
+                    copyToClipboard(context, it, R.string.creator)
+                },
+                creatorSearch = { text ->
+                    onSearchMangaDex(DisplayScreenType.AuthorByName(UiText.String(text)))
+                },
+            ),
+        descriptionActions =
+            DescriptionActions(
+                genreSearch = { text ->
+                    onSearchMangaDex(DisplayScreenType.Tag(UiText.String(text)))
+                },
+                genreSearchLibrary = onSearchLibrary,
+                altTitleClick = mangaViewModel::setAltTitle,
+                altTitleResetClick = { mangaViewModel.setAltTitle(null) },
+            ),
+        generatePalette = { drawable ->
+            val bitmap = drawable.toBitmap()
+            Palette.from(bitmap).generate {
+                it ?: return@generate
+                scope.launch {
+                    val vibrantColor = it.getBestColor() ?: return@launch
+                    mangaViewModel.updateMangaColor(vibrantColor)
+                }
+            }
+        },
+        onToggleFavorite = mangaViewModel::toggleFavorite,
+        dateFormat = remember { mangaViewModel.getDateFormat() },
+        trackActions =
+            TrackActions(
+                statusChange = { statusIndex, trackAndService ->
+                    mangaViewModel.updateTrackStatus(statusIndex, trackAndService)
+                },
+                scoreChange = { statusIndex, trackAndService ->
+                    mangaViewModel.updateTrackScore(statusIndex, trackAndService)
+                },
+                chapterChange = { newChapterNumber, trackAndService ->
+                    mangaViewModel.updateTrackChapter(newChapterNumber, trackAndService)
+                },
+                search = { title, service -> mangaViewModel.searchTracker(title, service) },
+                searchItemClick = { trackAndService ->
+                    mangaViewModel.registerTracking(trackAndService)
+                },
+                remove = { alsoRemoveFromTracker, service ->
+                    mangaViewModel.removeTracking(alsoRemoveFromTracker, service)
+                },
+                dateChange = { trackDateChange -> mangaViewModel.updateTrackDate(trackDateChange) },
+            ),
+        mergeActions =
+            MergeActions(
+                remove = mangaViewModel::removeMergedManga,
+                search = mangaViewModel::searchMergedManga,
+                add = mangaViewModel::addMergedManga,
+            ),
+        onSimilarClick = { onNavigate(Screens.Similar(mangaViewModel.getManga().uuid())) },
+        onShareClick = {
+            scope.launch {
+                val dir = context.sharedCacheDir() ?: throw Exception("Error accessing cache dir")
+
+                val cover =
+                    mangaViewModel.shareCover(
+                        dir,
+                        mangaViewModel.mangaDetailScreenState.value.manga.currentArtwork,
+                    )
+                val manga = mangaViewModel.getManga()
+                val sharableCover = cover?.getUriWithAuthority(context)
+
+                withUIContext {
+                    try {
+                        var url =
+                            mangaViewModel.sourceManager.mangaDex
+                                .mangaDetailsRequest(manga)
+                                .url
+                                .toString()
+                        url = "$url/" + manga.getSlug()
+                        val intent =
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "text/*"
+                                putExtra(Intent.EXTRA_TEXT, url)
+                                putExtra(Intent.EXTRA_TITLE, manga.title)
+                                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                if (cover != null) {
+                                    clipData = ClipData.newRawUri(null, sharableCover)
+                                }
+                            }
+                        context.startActivity(
+                            Intent.createChooser(intent, context.getString(R.string.share))
+                        )
+                    } catch (e: Exception) {
+                        context.toast(e.message.orUnknownError(context))
+                    }
+                }
+            }
+        },
+        coverActions =
+            CoverActions(
+                share = { _, artwork ->
+                    scope.launch {
+                        val dir =
+                            context.sharedCacheDir() ?: throw Exception("Error accessing cache dir")
+                        val cover = mangaViewModel.shareCover(dir, artwork)
+                        val sharableCover = cover?.getUriWithAuthority(context)
+                        withUIContext {
+                            try {
+                                val intent =
+                                    Intent(Intent.ACTION_SEND).apply {
+                                        putExtra(Intent.EXTRA_STREAM, sharableCover)
+                                        flags =
+                                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        clipData = ClipData.newRawUri(null, sharableCover)
+                                        type = "image/*"
+                                    }
+                                context.startActivity(
+                                    Intent.createChooser(intent, context.getString(R.string.share))
+                                )
+                            } catch (e: Exception) {
+                                context.toast(e.message.orUnknownError(context))
+                            }
+                        }
+                    }
+                },
+                set = mangaViewModel::setCover,
+                save = mangaViewModel::saveCover,
+                reset = mangaViewModel::resetCover,
+            ),
+        chapterFilterActions =
+            ChapterFilterActions(
+                changeSort = mangaViewModel::changeSortOption,
+                changeFilter = mangaViewModel::changeFilterOption,
+                changeScanlator = mangaViewModel::changeScanlatorOption,
+                changeLanguage = mangaViewModel::changeLanguageOption,
+                setAsGlobal = mangaViewModel::setGlobalOption,
+            ),
+        chapterActions =
+            ChapterActions(
+                mark = mangaViewModel::markChapters,
+                download = { chapterItems, downloadAction ->
+                    if (
+                        chapterItems.size == 1 &&
+                            MdConstants.UnsupportedOfficialGroupList.contains(
+                                chapterItems[0].chapter.scanlator
+                            )
+                    ) {
+                        context.toast(
+                            "${chapterItems[0].chapter.scanlator} not supported, try WebView"
+                        )
+                    } else {
+                        mangaViewModel.downloadChapters(chapterItems, downloadAction)
+                    }
+                },
+                delete = mangaViewModel::deleteChapters,
+                clearRemoved = mangaViewModel::clearRemovedChapters,
+                openNext = {
+                    mangaViewModel.mangaDetailScreenState.value.chapters.nextUnreadChapter
+                        .simpleChapter
+                        ?.let { simpleChapter ->
+                            val chapter = simpleChapter.toDbChapter()
+                            val manga = mangaViewModel.getManga()
+                            if (
+                                chapter.scanlator != null &&
+                                    MdConstants.UnsupportedOfficialGroupList.contains(
+                                        chapter.scanlator
+                                    )
+                            ) {
+                                context.toast("${chapter.scanlator} not supported, try WebView")
+                            } else if (
+                                !chapter.isAvailable(mangaViewModel.downloadManager, manga)
+                            ) {
+                                context.toast("Chapter is not available")
+                            } else {
+                                context.startActivity(
+                                    ReaderActivity.newIntent(context, manga, chapter)
+                                )
+                            }
+                        }
+                },
+                open = { chapterItem ->
+                    val chapter = chapterItem.chapter.toDbChapter()
+                    val manga = mangaViewModel.getManga()
+                    if (
+                        chapter.scanlator != null &&
+                            MdConstants.UnsupportedOfficialGroupList.contains(chapter.scanlator)
+                    ) {
+                        context.toast("${chapter.scanlator} not supported, try WebView")
+                    } else if (!chapter.isAvailable(mangaViewModel.downloadManager, manga)) {
+                        context.toast("Chapter is not available")
+                    } else {
+                        context.startActivity(ReaderActivity.newIntent(context, manga, chapter))
+                    }
+                },
+                blockScanlator = mangaViewModel::blockScanlator,
+                openComment = { chapterId -> mangaViewModel.openComment(context, chapterId) },
+                createMangaFolder = mangaViewModel::createMangaFolder,
+                openInWebView = { chapterItem ->
+                    if (chapterItem.chapter.isUnavailable) {
+                        context.toast("Chapter is not available")
+                    } else {
+                        val url = mangaViewModel.getChapterUrl(chapterItem.chapter)
+                        openWebView(url, chapterItem.chapter.name)
+                    }
+                },
+                markPrevious = mangaViewModel::markPreviousChapters,
+            ),
+        openWebView = openWebView,
+        onBackPressed = onBackPressed,
+    )
+}
+
+@Composable
+private fun MangaScreenWrapper(
+    screenState: MangaConstants.MangaDetailScreenState,
+    windowSizeClass: WindowSizeClass,
     onRefresh: () -> Unit,
     onSearch: (String?) -> Unit,
-    generatePalette: (Drawable) -> Unit = {},
-    toggleFavorite: (Boolean) -> Unit,
+    openWebView: (String, String) -> Unit,
+    generatePalette: (Drawable) -> Unit,
+    updateSnackbarColor: (SnackbarColor) -> Unit,
+    onToggleFavorite: (Boolean) -> Unit,
     categoryActions: CategoryActions,
     dateFormat: DateFormat,
     trackActions: TrackActions,
-    similarClick: () -> Unit = {},
+    onSimilarClick: () -> Unit,
     coverActions: CoverActions,
     mergeActions: MergeActions,
-    shareClick: () -> Unit,
+    onShareClick: () -> Unit,
     informationActions: InformationActions,
     descriptionActions: DescriptionActions,
     chapterFilterActions: ChapterFilterActions,
     chapterActions: ChapterActions,
     onBackPressed: () -> Unit,
+    snackbarHost: @Composable () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val sheetState =
-        rememberModalBottomSheetState(
-            initialValue = ModalBottomSheetValue.Hidden,
-            skipHalfExpanded = true,
-            animationSpec = tween(durationMillis = 150, easing = LinearEasing),
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    val themeColorState =
+        rememberThemeColorState(
+            themeBasedOffCovers = screenState.general.themeBasedOffCovers,
+            vibrantColor = screenState.general.vibrantColor,
         )
-    /** CLose the bottom sheet on back if its open */
-    BackHandler(enabled = sheetState.isVisible) { scope.launch { sheetState.hide() } }
 
-    val context = LocalContext.current
-    val snackbarHostState = remember { SnackbarHostState() }
-
-    LaunchedEffect(snackbarHostState.currentSnackbarData) {
-        snackbar.collect { state ->
-            scope.launch {
-                snackbarHostState.currentSnackbarData?.dismiss()
-                val result =
-                    snackbarHostState.showSnackbar(
-                        message = state.getFormattedMessage(context),
-                        actionLabel = state.getFormattedActionLabel(context),
-                        duration = state.snackbarDuration,
-                        withDismissAction = true,
-                    )
-                when (result) {
-                    SnackbarResult.ActionPerformed -> state.action?.invoke()
-                    SnackbarResult.Dismissed -> state.dismissAction?.invoke()
-                }
-            }
-        }
-    }
-
-    var currentBottomSheet: DetailsBottomSheetScreen? by remember { mutableStateOf(null) }
-
-    val isDarkTheme = isSystemInDarkTheme()
-    val surfaceColor = MaterialTheme.colorScheme.surface
-
-    val defaultThemeColorState = defaultThemeColorState()
-
-    var themeColorState by remember {
-        mutableStateOf(
-            defaultThemeColorState,
-        )
-    }
-
-    if (generalState.value.themeBasedOffCovers && generalState.value.vibrantColor != null) {
-        val color = getButtonThemeColor(Color(generalState.value.vibrantColor!!), isDarkTheme)
-        themeColorState =
-            ThemeColorState(
-                buttonColor = color,
-                rippleTheme = DynamicRippleTheme(color),
-                textSelectionColors = dynamicTextSelectionColor(color),
-                altContainerColor =
-                    Color(ColorUtils.blendARGB(color.toArgb(), surfaceColor.toArgb(), .706f)),
+    LaunchedEffect(themeColorState) {
+        updateSnackbarColor(
+            SnackbarColor(
+                actionColor = themeColorState.primaryColor,
+                containerColor = themeColorState.containerColor,
+                contentColor = themeColorState.onContainerColor,
             )
+        )
     }
 
-    // set the current sheet to null when bottom sheet is closed
-    LaunchedEffect(key1 = sheetState.isVisible) {
-        if (!sheetState.isVisible) {
-            currentBottomSheet = null
+    var currentBottomSheet by remember { mutableStateOf<DetailsBottomSheetScreen?>(null) }
+
+    LaunchedEffect(currentBottomSheet) {
+        if (currentBottomSheet != null) {
+            sheetState.show()
         }
     }
 
     fun openSheet(sheet: DetailsBottomSheetScreen) {
-        scope.launch {
-            currentBottomSheet = sheet
-            sheetState.show()
-        }
+        scope.launch { currentBottomSheet = sheet }
     }
-    ModalBottomSheetLayout(
-        sheetState = sheetState,
-        sheetShape = RoundedCornerShape(topStart = Shapes.sheetRadius, topEnd = Shapes.sheetRadius),
-        sheetContent = {
-            Box(modifier = Modifier.defaultMinSize(minHeight = Size.extraExtraTiny)) {
-                currentBottomSheet?.let { currentSheet ->
-                    DetailsBottomSheet(
-                        currentScreen = currentSheet,
-                        themeColorState = themeColorState,
-                        generalState = generalState,
-                        mangaState = mangaState,
-                        trackMergeState = trackMergeState,
-                        addNewCategory = categoryActions.addNew,
-                        dateFormat = dateFormat,
-                        openSheet = ::openSheet,
-                        trackActions = trackActions,
-                        coverActions = coverActions,
-                        mergeActions = mergeActions,
-                        chapterFilterActions = chapterFilterActions,
-                        openInWebView = { url, title ->
-                            (context as? Activity)?.openInWebView(url, title)
-                        },
-                        closeSheet = { scope.launch { sheetState.hide() } },
-                    )
-                }
-            }
-        },
-    ) {
-        NekoScaffold(
-            type = NekoScaffoldType.Search,
-            themeColorState = themeColorState,
-            onNavigationIconClicked = onBackPressed,
-            onSearch = onSearch,
-            searchPlaceHolder = stringResource(id = R.string.search_chapters),
-            snackBarHost =
-                snackbarHost(
-                    snackbarHostState,
-                    themeColorState.buttonColor,
-                ),
-            actions = {
-                OverflowOptions(
-                    chapterActions = chapterActions,
-                    chaptersProvider = { generalState.value.activeChapters }
+
+    if (currentBottomSheet != null) {
+        ModalBottomSheet(
+            onDismissRequest = { scope.launch { currentBottomSheet = null } },
+            sheetState = sheetState,
+            content = {
+                DetailsBottomSheet(
+                    currentScreen = currentBottomSheet!!,
+                    themeColorState = themeColorState,
+                    mangaDetailScreenState = screenState,
+                    addNewCategory = categoryActions.addNew,
+                    dateFormat = dateFormat,
+                    trackActions = trackActions,
+                    coverActions = coverActions,
+                    mergeActions = mergeActions,
+                    chapterFilterActions = chapterFilterActions,
+                    openInWebView = { url, title -> openWebView(url, title) },
+                    onNavigate = { newSheet -> scope.launch { currentBottomSheet = newSheet } },
                 )
             },
-        ) { incomingPaddingValues ->
-            PullRefresh(
-                refreshing = isRefreshing.value,
-                onRefresh = onRefresh,
-                indicatorOffset = incomingPaddingValues.calculateTopPadding(),
-                backgroundColor = themeColorState.buttonColor,
-                contentColor = MaterialTheme.colorScheme.surface,
-            ) {
-                val mangaDetailContentPadding =
-                    PaddingValues(
-                        bottom =
-                            WindowInsets.navigationBars
-                                .only(WindowInsetsSides.Bottom)
-                                .asPaddingValues()
-                                .calculateBottomPadding(),
-                    )
+        )
+    }
 
-                val chapterContentPadding =
-                    PaddingValues(
-                        bottom =
-                            WindowInsets.navigationBars
-                                .only(WindowInsetsSides.Bottom)
-                                .asPaddingValues()
-                                .calculateBottomPadding(),
-                        top = incomingPaddingValues.calculateTopPadding(),
-                    )
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(rememberTopAppBarState())
 
-                CompositionLocalProvider(
-                    LocalRippleTheme provides themeColorState.rippleTheme,
-                    LocalTextSelectionColors provides themeColorState.textSelectionColors
+    val isTablet =
+        windowSizeClass.widthSizeClass == WindowWidthSizeClass.Expanded &&
+            !screenState.general.forcePortrait
+
+    val onToggleFavoriteAction =
+        remember(
+            screenState.manga.inLibrary,
+            screenState.category.allCategories,
+            screenState.general.hasDefaultCategory,
+        ) {
+            {
+                if (
+                    !screenState.manga.inLibrary && screenState.category.allCategories.isNotEmpty()
                 ) {
-                    if (
-                        windowSizeClass.widthSizeClass == WindowWidthSizeClass.Expanded &&
-                            !generalState.value.forcePortrait
-                    ) {
-                        SideBySideLayout(
-                            mangaDetailContentPadding = mangaDetailContentPadding,
-                            chapterContentPadding = chapterContentPadding,
-                            details = {
-                                Details(
-                                    themeColorState = themeColorState,
-                                    mangaState = mangaState,
-                                    generalState = generalState,
-                                    isSearching = isSearching,
-                                    trackMergeState = trackMergeState,
-                                    windowSizeClass = windowSizeClass,
-                                    chapterActions = chapterActions,
-                                    categoryActions = categoryActions,
-                                    descriptionActions = descriptionActions,
-                                    informationActions = informationActions,
-                                    generatePalette = generatePalette,
-                                    openSheet = { sheet -> openSheet(sheet) },
-                                    similarClick = similarClick,
-                                    shareClick = shareClick,
-                                    toggleFavorite = toggleFavorite,
-                                )
-                            },
-                            chapterHeader = {
-                                ChapterHeader(
-                                    themeColorState = themeColorState,
-                                    isSearching = isSearching,
-                                    generalState = generalState,
-                                    openSheet = { sheet -> openSheet(sheet) },
-                                )
-                            },
-                            chaptersProvider = {
-                                when (isSearching.value) {
-                                    true -> generalState.value.searchChapters
-                                    false -> generalState.value.activeChapters
-                                }
-                            },
-                            chapterRow = { index, chapterItem ->
-                                ChapterRow(
-                                    themeColorState = themeColorState,
-                                    generalState = generalState,
-                                    chapterActions = chapterActions,
-                                    scope = scope,
-                                    chapterItem = chapterItem,
-                                    index = index,
-                                )
-                            },
-                        )
+                    if (screenState.general.hasDefaultCategory) {
+                        onToggleFavorite(true)
                     } else {
-                        VerticalLayout(
-                            contentPadding = mangaDetailContentPadding,
-                            details = {
-                                Details(
-                                    themeColorState = themeColorState,
-                                    mangaState = mangaState,
-                                    generalState = generalState,
-                                    isSearching = isSearching,
-                                    trackMergeState = trackMergeState,
-                                    windowSizeClass = windowSizeClass,
-                                    chapterActions = chapterActions,
-                                    categoryActions = categoryActions,
-                                    descriptionActions = descriptionActions,
-                                    informationActions = informationActions,
-                                    generatePalette = generatePalette,
-                                    openSheet = { sheet -> openSheet(sheet) },
-                                    similarClick = similarClick,
-                                    shareClick = shareClick,
-                                    toggleFavorite = toggleFavorite,
-                                )
-                            },
-                            chapterHeader = {
-                                ChapterHeader(
-                                    themeColorState = themeColorState,
-                                    isSearching = isSearching,
-                                    generalState = generalState,
-                                    openSheet = { sheet -> openSheet(sheet) },
-                                )
-                            },
-                            chaptersProvider = {
-                                when (isSearching.value) {
-                                    true -> generalState.value.searchChapters
-                                    false -> generalState.value.activeChapters
-                                }
-                            },
-                            chapterRow = { index, chapterItem ->
-                                ChapterRow(
-                                    themeColorState = themeColorState,
-                                    generalState = generalState,
-                                    chapterActions = chapterActions,
-                                    scope = scope,
-                                    chapterItem = chapterItem,
-                                    index = index,
-                                )
-                            },
+                        openSheet(
+                            DetailsBottomSheetScreen.CategoriesSheet(
+                                addingToLibrary = true,
+                                setCategories = categoryActions.set,
+                                addToLibraryClick = { onToggleFavorite(false) },
+                            )
                         )
                     }
-
-                    if (generalState.value.removedChapters.isNotEmpty()) {
-                        RemovedChaptersDialog(
-                            themeColorState = themeColorState,
-                            chapters = generalState.value.removedChapters,
-                            onConfirm = {
-                                chapterActions.delete(generalState.value.removedChapters)
-                                chapterActions.clearRemoved
-                            },
-                            onDismiss = chapterActions.clearRemoved,
-                        )
-                    }
+                } else {
+                    onToggleFavorite(false)
                 }
             }
         }
+
+    var isInitialized by remember { mutableStateOf(false) }
+
+    LaunchedEffect(screenState.manga.initialized, screenState.general.firstLoad) {
+        if (screenState.manga.initialized && !screenState.general.firstLoad) {
+            delay(250L)
+            isInitialized = true
+        } else {
+            isInitialized = false
+        }
+    }
+
+    val refreshState =
+        remember(screenState.general.isRefreshing, themeColorState) {
+            RefreshState(
+                enabled = true,
+                isRefreshing = screenState.general.isRefreshing,
+                onRefresh = onRefresh,
+                trackColor = themeColorState.primaryColor,
+            )
+        }
+
+    val onBookmark: (ChapterItem) -> Unit =
+        remember(chapterActions) {
+            { item ->
+                chapterActions.mark(
+                    listOf(item),
+                    if (item.chapter.bookmark) ChapterMarkActions.UnBookmark(true)
+                    else ChapterMarkActions.Bookmark(true),
+                )
+            }
+        }
+
+    val onRead: (ChapterItem) -> Unit =
+        remember(chapterActions) {
+            { item ->
+                chapterActions.mark(
+                    listOf(item),
+                    if (item.chapter.read) ChapterMarkActions.Unread(true)
+                    else ChapterMarkActions.Read(true),
+                )
+            }
+        }
+
+    ChildScreenScaffold(
+        refreshState = refreshState,
+        scrollBehavior = scrollBehavior,
+        snackbarHost = snackbarHost,
+        topBar = {
+            MangaScreenTopBar(
+                screenState = screenState,
+                chapterActions = chapterActions,
+                themeColorState = themeColorState,
+                scrollBehavior = scrollBehavior,
+                onNavigationIconClick = onBackPressed,
+                onSearch = onSearch,
+            )
+        },
+    ) { contentPadding ->
+        if (isTablet) {
+            SideBySideLayout(
+                incomingContentPadding = contentPadding,
+                isInitialized = isInitialized,
+                screenState = screenState,
+                windowSizeClass = windowSizeClass,
+                themeColorState = themeColorState,
+                chapterActions = chapterActions,
+                informationActions = informationActions,
+                descriptionActions = descriptionActions,
+                onSimilarClick = onSimilarClick,
+                onShareClick = onShareClick,
+                onToggleFavorite = onToggleFavoriteAction,
+                generatePalette = generatePalette,
+                onOpenSheet = ::openSheet,
+                categoryActions = categoryActions,
+                onBookmark = onBookmark,
+                onRead = onRead,
+            )
+        } else {
+            VerticalLayout(
+                incomingContentPadding = contentPadding,
+                isInitialized = isInitialized,
+                screenState = screenState,
+                windowSizeClass = windowSizeClass,
+                themeColorState = themeColorState,
+                chapterActions = chapterActions,
+                informationActions = informationActions,
+                descriptionActions = descriptionActions,
+                onSimilarClick = onSimilarClick,
+                onShareClick = onShareClick,
+                onToggleFavorite = onToggleFavoriteAction,
+                generatePalette = generatePalette,
+                onOpenSheet = ::openSheet,
+                categoryActions = categoryActions,
+                onBookmark = onBookmark,
+                onRead = onRead,
+            )
+        }
+
+        if (screenState.general.removedChapters.isNotEmpty()) {
+            RemovedChaptersDialog(
+                themeColorState = themeColorState,
+                chapters = screenState.general.removedChapters,
+                onConfirm = {
+                    chapterActions.delete(screenState.general.removedChapters)
+                    chapterActions.clearRemoved()
+                },
+                onDismiss = { chapterActions.clearRemoved() },
+            )
+        }
+    }
+}
+
+private fun LazyListScope.chapterList(
+    chapters: List<ChapterItem>,
+    screenState: MangaConstants.MangaDetailScreenState,
+    themeColorState: ThemeColorState,
+    chapterActions: ChapterActions,
+    onBookmark: (ChapterItem) -> Unit,
+    onRead: (ChapterItem) -> Unit,
+    onOpenSheet: (DetailsBottomSheetScreen) -> Unit,
+) {
+    item(key = "chapter_header") {
+        ChapterHeader(
+            themeColor = themeColorState,
+            numberOfChapters = chapters.size,
+            filterText = screenState.chapters.chapterFilterText,
+            onClick = { onOpenSheet(DetailsBottomSheetScreen.FilterChapterSheet) },
+        )
+    }
+
+    itemsIndexed(items = chapters, key = { _, chapter -> chapter.chapter.id }) { index, chapterItem
+        ->
+        MangaChapterListItem(
+            index = index,
+            chapterItem = chapterItem,
+            count = chapters.size,
+            themeColorState = themeColorState,
+            shouldHideChapterTitles =
+                screenState.chapters.chapterFilter.hideChapterTitles == ToggleableState.On,
+            chapterActions = chapterActions,
+            onBookmark = onBookmark,
+            onRead = onRead,
+            swipeRightAction = screenState.general.chapterSwipeRightAction,
+            swipeLeftAction = screenState.general.chapterSwipeLeftAction,
+        )
     }
 }
 
 @Composable
 private fun VerticalLayout(
-    contentPadding: PaddingValues,
-    details: @Composable () -> Unit,
-    chapterHeader: @Composable () -> Unit,
-    chaptersProvider: () -> ImmutableList<ChapterItem>,
-    chapterRow: @Composable (Int, ChapterItem) -> Unit,
+    incomingContentPadding: PaddingValues,
+    isInitialized: Boolean,
+    screenState: MangaConstants.MangaDetailScreenState,
+    windowSizeClass: WindowSizeClass,
+    themeColorState: ThemeColorState,
+    categoryActions: CategoryActions,
+    chapterActions: ChapterActions,
+    informationActions: InformationActions,
+    descriptionActions: DescriptionActions,
+    onSimilarClick: () -> Unit,
+    onShareClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    generatePalette: (Drawable) -> Unit,
+    onOpenSheet: (DetailsBottomSheetScreen) -> Unit,
+    onBookmark: (ChapterItem) -> Unit,
+    onRead: (ChapterItem) -> Unit,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = contentPadding) {
-        item(key = 1) { details() }
+    val contentPadding = PaddingValues(bottom = incomingContentPadding.calculateBottomPadding())
+    val listState = rememberLazyListState()
 
-        item(key = 2) { chapterHeader() }
-
-        itemsIndexed(items = chaptersProvider(), key = { _, chapter -> chapter.chapter.id }) {
-            index,
-            chapter ->
-            chapterRow(index, chapter)
+    VerticalFastScroller(
+        listState = listState,
+        modifier = Modifier.fillMaxSize(),
+        thumbColor = themeColorState.primaryColor,
+        topContentPadding = incomingContentPadding.calculateTopPadding(),
+        bottomContentPadding = incomingContentPadding.calculateBottomPadding(),
+    ) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = contentPadding,
+        ) {
+            item(key = "header") {
+                MangaDetailsHeader(
+                    mangaDetailScreenState = screenState,
+                    isInitialized = isInitialized,
+                    windowSizeClass = windowSizeClass,
+                    isLoggedIntoTrackers = screenState.track.loggedInTrackService.isNotEmpty(),
+                    themeColorState = themeColorState,
+                    generatePalette = generatePalette,
+                    toggleFavorite = onToggleFavorite,
+                    onCategoriesClick = {
+                        onOpenSheet(
+                            DetailsBottomSheetScreen.CategoriesSheet(
+                                setCategories = categoryActions.set
+                            )
+                        )
+                    },
+                    onTrackingClick = { onOpenSheet(DetailsBottomSheetScreen.TrackingSheet) },
+                    onArtworkClick = { onOpenSheet(DetailsBottomSheetScreen.ArtworkSheet) },
+                    onSimilarClick = onSimilarClick,
+                    onMergeClick = { onOpenSheet(DetailsBottomSheetScreen.MergeSheet) },
+                    onLinksClick = { onOpenSheet(DetailsBottomSheetScreen.ExternalLinksSheet) },
+                    onShareClick = onShareClick,
+                    descriptionActions = descriptionActions,
+                    informationActions = informationActions,
+                    onQuickReadClick = { chapterActions.openNext() },
+                )
+            }
+            if (isInitialized) {
+                chapterList(
+                    chapters =
+                        if (screenState.general.isSearching) screenState.general.searchChapters
+                        else screenState.chapters.activeChapters,
+                    screenState = screenState,
+                    themeColorState = themeColorState,
+                    chapterActions = chapterActions,
+                    onBookmark = onBookmark,
+                    onRead = onRead,
+                    onOpenSheet = onOpenSheet,
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun SideBySideLayout(
-    mangaDetailContentPadding: PaddingValues,
-    chapterContentPadding: PaddingValues,
-    details: @Composable () -> Unit,
-    chapterHeader: @Composable () -> Unit,
-    chaptersProvider: () -> ImmutableList<ChapterItem>,
-    chapterRow: @Composable (Int, ChapterItem) -> Unit,
+    incomingContentPadding: PaddingValues,
+    isInitialized: Boolean,
+    screenState: MangaConstants.MangaDetailScreenState,
+    windowSizeClass: WindowSizeClass,
+    themeColorState: ThemeColorState,
+    categoryActions: CategoryActions,
+    chapterActions: ChapterActions,
+    informationActions: InformationActions,
+    descriptionActions: DescriptionActions,
+    onSimilarClick: () -> Unit,
+    onShareClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    generatePalette: (Drawable) -> Unit,
+    onOpenSheet: (DetailsBottomSheetScreen) -> Unit,
+    onBookmark: (ChapterItem) -> Unit,
+    onRead: (ChapterItem) -> Unit,
 ) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-    ) {
+
+    val detailsContentPadding =
+        PaddingValues(bottom = incomingContentPadding.calculateBottomPadding())
+
+    val chapterContentPadding =
+        PaddingValues(
+            bottom = incomingContentPadding.calculateBottomPadding(),
+            top = incomingContentPadding.calculateTopPadding(),
+        )
+
+    Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(.5f).fillMaxHeight(),
-            contentPadding = mangaDetailContentPadding,
+            contentPadding = detailsContentPadding,
         ) {
-            item { details() }
+            item(key = "header") {
+                MangaDetailsHeader(
+                    mangaDetailScreenState = screenState,
+                    isInitialized = isInitialized,
+                    windowSizeClass = windowSizeClass,
+                    isLoggedIntoTrackers = screenState.track.loggedInTrackService.isNotEmpty(),
+                    themeColorState = themeColorState,
+                    generatePalette = generatePalette,
+                    toggleFavorite = onToggleFavorite,
+                    onCategoriesClick = {
+                        onOpenSheet(
+                            DetailsBottomSheetScreen.CategoriesSheet(
+                                setCategories = categoryActions.set
+                            )
+                        )
+                    },
+                    onTrackingClick = { onOpenSheet(DetailsBottomSheetScreen.TrackingSheet) },
+                    onArtworkClick = { onOpenSheet(DetailsBottomSheetScreen.ArtworkSheet) },
+                    onSimilarClick = onSimilarClick,
+                    onMergeClick = { onOpenSheet(DetailsBottomSheetScreen.MergeSheet) },
+                    onLinksClick = { onOpenSheet(DetailsBottomSheetScreen.ExternalLinksSheet) },
+                    onShareClick = onShareClick,
+                    descriptionActions = descriptionActions,
+                    informationActions = informationActions,
+                    onQuickReadClick = { chapterActions.openNext() },
+                )
+            }
         }
 
         VerticalDivider(Modifier.align(Alignment.TopCenter))
 
-        LazyColumn(
+        val listState = rememberLazyListState()
+
+        VerticalFastScroller(
+            listState = listState,
             modifier =
                 Modifier.align(Alignment.TopEnd).fillMaxWidth(.5f).fillMaxHeight().clipToBounds(),
-            contentPadding = chapterContentPadding,
+            thumbColor = themeColorState.primaryColor,
+            topContentPadding = incomingContentPadding.calculateTopPadding(),
+            bottomContentPadding = incomingContentPadding.calculateBottomPadding(),
         ) {
-            item { chapterHeader() }
-            itemsIndexed(items = chaptersProvider(), key = { _, chapter -> chapter.chapter.id }) {
-                index,
-                chapter ->
-                chapterRow(index, chapter)
+            LazyColumn(state = listState, contentPadding = chapterContentPadding) {
+                if (isInitialized) {
+                    chapterList(
+                        chapters =
+                            if (screenState.general.isSearching) screenState.general.searchChapters
+                            else screenState.chapters.activeChapters,
+                        screenState = screenState,
+                        themeColorState = themeColorState,
+                        chapterActions = chapterActions,
+                        onBookmark = onBookmark,
+                        onRead = onRead,
+                        onOpenSheet = onOpenSheet,
+                    )
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun rememberThemeColorState(
+    themeBasedOffCovers: Boolean,
+    vibrantColor: Int?,
+): ThemeColorState {
+    val isDark = isSystemInDarkTheme()
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+
+    val defaultColorState = defaultThemeColorState()
+
+    return remember(
+        themeBasedOffCovers,
+        vibrantColor,
+        isDark,
+        surfaceColor,
+        onSurfaceColor,
+        defaultColorState,
+    ) {
+        if (themeBasedOffCovers && vibrantColor != null) {
+            val color = getButtonThemeColor(Color(vibrantColor), isDark)
+            val containerColor =
+                Color(ColorUtils.blendARGB(color.toArgb(), surfaceColor.toArgb(), .706f))
+            val onContainerColor =
+                Color(ColorUtils.blendARGB(color.toArgb(), onSurfaceColor.toArgb(), .706f))
+
+            ThemeColorState(
+                primaryColor = color,
+                rippleColor = color.copy(alpha = NekoColors.mediumAlphaLowContrast),
+                rippleConfiguration = nekoRippleConfiguration(color),
+                textSelectionColors = dynamicTextSelectionColor(color),
+                containerColor = containerColor,
+                onContainerColor = onContainerColor,
+                altContainerColor =
+                    surfaceColor.surfaceColorAtElevationCustomColor(
+                        surfaceColor,
+                        color,
+                        Size.small,
+                    ),
+                onAltContainerColor = color,
+            )
+        } else {
+            defaultColorState
         }
     }
 }
@@ -455,181 +868,8 @@ private fun getButtonThemeColor(buttonColor: Color, isNightMode: Boolean): Color
     }
 }
 
-@Composable
-private fun ChapterRow(
-    themeColorState: ThemeColorState,
-    generalState: State<MangaScreenGeneralState>,
-    chapterActions: ChapterActions,
-    scope: CoroutineScope,
-    chapterItem: ChapterItem,
-    index: Int,
-) {
-    ChapterRow(
-        themeColor = themeColorState,
-        title = chapterItem.chapter.name,
-        scanlator = chapterItem.chapter.scanlator,
-        language = chapterItem.chapter.language,
-        chapterNumber = chapterItem.chapter.chapterNumber.toDouble(),
-        dateUploaded = chapterItem.chapter.dateUpload,
-        lastPageRead = chapterItem.chapter.lastPageRead,
-        pagesLeft = chapterItem.chapter.pagesLeft,
-        read = chapterItem.chapter.read,
-        bookmark = chapterItem.chapter.bookmark,
-        isMerged = chapterItem.chapter.isMergedChapter(),
-        downloadStateProvider = { chapterItem.downloadState },
-        downloadProgressProvider = { chapterItem.downloadProgress },
-        shouldHideChapterTitles =
-            generalState.value.chapterFilter.hideChapterTitles == ToggleableState.On,
-        onClick = { chapterActions.open(chapterItem) },
-        onBookmark = {
-            chapterActions.mark(
-                listOf(chapterItem),
-                if (chapterItem.chapter.bookmark) MangaConstants.MarkAction.UnBookmark(true)
-                else MangaConstants.MarkAction.Bookmark(true),
-            )
-        },
-        onRead = {
-            chapterActions.mark(
-                listOf(chapterItem),
-                when (chapterItem.chapter.read) {
-                    true -> MangaConstants.MarkAction.Unread(true)
-                    false -> MangaConstants.MarkAction.Read(true)
-                },
-            )
-        },
-        onWebView = { chapterActions.openInBrowser(chapterItem) },
-        onComment = { chapterActions.openComment(chapterItem.chapter.mangaDexChapterId) },
-        onDownload = { downloadAction ->
-            chapterActions.download(listOf(chapterItem), downloadAction)
-        },
-        markPrevious = { read ->
-            val chaptersToMark = generalState.value.activeChapters.subList(0, index)
-            val lastIndex = generalState.value.activeChapters.lastIndex
-            val altChapters =
-                if (index == lastIndex) {
-                    emptyList()
-                } else {
-                    generalState.value.activeChapters.slice(IntRange(index + 1, lastIndex))
-                }
-            val action =
-                when (read) {
-                    true -> MangaConstants.MarkAction.PreviousRead(true, altChapters)
-                    false -> MangaConstants.MarkAction.PreviousUnread(true, altChapters)
-                }
-            chapterActions.mark(chaptersToMark, action)
-        },
-        blockScanlator = { scanlator -> chapterActions.blockScanlator(scanlator) },
-    )
-}
-
-@Composable
-fun ChapterHeader(
-    themeColorState: ThemeColorState,
-    isSearching: State<Boolean>,
-    generalState: State<MangaScreenGeneralState>,
-    openSheet: (DetailsBottomSheetScreen) -> Unit,
-) {
-    ChapterHeader(
-        themeColor = themeColorState,
-        numberOfChaptersProvider = {
-            when (isSearching.value) {
-                true -> generalState.value.searchChapters.size
-                false -> generalState.value.activeChapters.size
-            }
-        },
-        filterTextProvider = { generalState.value.chapterFilterText },
-        onClick = { openSheet(DetailsBottomSheetScreen.FilterChapterSheet) },
-    )
-}
-
-@Composable
-fun Details(
-    themeColorState: ThemeColorState,
-    mangaState: State<MangaConstants.MangaScreenMangaState>,
-    generalState: State<MangaScreenGeneralState>,
-    isSearching: State<Boolean>,
-    trackMergeState: State<MangaConstants.MangaScreenTrackMergeState>,
-    windowSizeClass: WindowSizeClass,
-    chapterActions: ChapterActions,
-    categoryActions: CategoryActions,
-    descriptionActions: DescriptionActions,
-    informationActions: InformationActions,
-    generatePalette: (Drawable) -> Unit,
-    openSheet: (DetailsBottomSheetScreen) -> Unit,
-    similarClick: () -> Unit,
-    shareClick: () -> Unit,
-    toggleFavorite: (Boolean) -> Unit,
-) {
-    MangaDetailsHeader(
-        mangaState = mangaState,
-        generalState = generalState,
-        isSearching = isSearching.value,
-        windowSizeClass = windowSizeClass,
-        informationActions = informationActions,
-        themeColorState = themeColorState,
-        generatePalette = generatePalette,
-        isLoggedIntoTrackersProvider = { trackMergeState.value.loggedInTrackService.isNotEmpty() },
-        toggleFavorite = {
-            if (!mangaState.value.inLibrary && generalState.value.allCategories.isNotEmpty()) {
-                if (generalState.value.hasDefaultCategory) {
-                    toggleFavorite(true)
-                } else {
-                    openSheet(
-                        DetailsBottomSheetScreen.CategoriesSheet(
-                            addingToLibrary = true,
-                            setCategories = categoryActions.set,
-                            addToLibraryClick = { toggleFavorite(false) },
-                        ),
-                    )
-                }
-            } else {
-                toggleFavorite(false)
-            }
-        },
-        moveCategories = {
-            openSheet(
-                DetailsBottomSheetScreen.CategoriesSheet(
-                    addingToLibrary = false,
-                    setCategories = categoryActions.set,
-                ),
-            )
-        },
-        trackingClick = { openSheet(DetailsBottomSheetScreen.TrackingSheet) },
-        similarClick = similarClick,
-        artworkClick = { openSheet(DetailsBottomSheetScreen.ArtworkSheet) },
-        mergeClick = { openSheet(DetailsBottomSheetScreen.MergeSheet) },
-        linksClick = { openSheet(DetailsBottomSheetScreen.ExternalLinksSheet) },
-        shareClick = shareClick,
-        descriptionActions = descriptionActions,
-        quickReadClick = { chapterActions.openNext() },
-    )
-}
-
-class ThemeColorState(
-    buttonColor: Color,
-    rippleTheme: RippleTheme,
-    textSelectionColors: TextSelectionColors,
-    altContainerColor: Color
-) {
-    var buttonColor by mutableStateOf(buttonColor)
-    var rippleTheme by mutableStateOf(rippleTheme)
-    var textSelectionColors by mutableStateOf(textSelectionColors)
-    var altContainerColor by mutableStateOf(altContainerColor)
-}
-
-@Composable
-fun defaultThemeColorState(): ThemeColorState {
-    return ThemeColorState(
-        buttonColor = MaterialTheme.colorScheme.secondary,
-        rippleTheme = PrimaryColorRippleTheme,
-        textSelectionColors = LocalTextSelectionColors.current,
-        altContainerColor =
-            Color(
-                ColorUtils.blendARGB(
-                    MaterialTheme.colorScheme.secondary.toArgb(),
-                    MaterialTheme.colorScheme.surface.toArgb(),
-                    .706f
-                )
-            ),
-    )
+/** Copy the Device and App info to clipboard */
+private fun copyToClipboard(context: Context, content: String, @StringRes label: Int) {
+    val clipboard = context.getSystemService<ClipboardManager>()!!
+    clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(label), content))
 }

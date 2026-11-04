@@ -1,35 +1,51 @@
 [versions]
-agp_version = "8.2.2"
-lifecycle_version = "2.8.2"
+agp_version = "9.5.0"
+lifecycle_version = "2.11.0"
+room_version = "2.8.5"
+baselineprofile_version = "1.5.0"
+uiautomator_version = "2.4.0"
+benchmark_version = "1.5.0"
+profileinstaller_version = "1.4.1"
 
 [libraries]
 
 gradle = { module = "com.android.tools.build:gradle", version.ref = "agp_version" }
 
 
-appcompat = "androidx.appcompat:appcompat:1.6.1"
+appcompat = "androidx.appcompat:appcompat:1.8.0"
 cardview = "androidx.cardview:cardview:1.0.0"
-webkit = "androidx.webkit:webkit:1.11.0"
-recyclerview = "androidx.recyclerview:recyclerview:1.3.2"
+webkit = "androidx.webkit:webkit:1.18.0"
+recyclerview = "androidx.recyclerview:recyclerview:1.4.0"
 preferencektx = "androidx.preference:preference-ktx:1.2.1"
-annotation = "androidx.annotation:annotation:1.8.0"
-browser = "androidx.browser:browser:1.8.0"
-biometric = "androidx.biometric:biometric:1.1.0"
-palette = "androidx.palette:palette:1.0.0"
-core-ktx = "androidx.core:core-ktx:1.13.1"
-constraintlayout = "androidx.constraintlayout:constraintlayout:2.1.4"
-multidex = "androidx.multidex:multidex:2.0.1"
-work = "androidx.work:work-runtime-ktx:2.9.0"
+annotation = "androidx.annotation:annotation:1.11.0"
+browser = "androidx.browser:browser:1.10.0"
+biometric = "androidx.biometric:biometric-ktx:1.2.0-alpha05"
+palette = "androidx.palette:palette:1.1.0"
+core-ktx = "androidx.core:core-ktx:1.19.1"
+constraintlayout = "androidx.constraintlayout:constraintlayout:2.2.2"
+work = "androidx.work:work-runtime-ktx:2.12.0"
 
 lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "lifecycle_version" }
 lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle_version" }
 lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle_version" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle_version" }
 
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room_version" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room_version" }
+room-ktx = { module = "androidx.room:room-ktx", version.ref = "room_version" }
+room-testing = { module = "androidx.room:room-testing", version.ref = "room_version" }
+
+profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller_version" }
+uiautomator = { module = "androidx.test.uiautomator:uiautomator", version.ref = "uiautomator_version" }
+benchmark-macro = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "benchmark_version" }
+test-ext-junit = "androidx.test.ext:junit:1.3.0"
+baselineprofile-gradle = { module = "androidx.baselineprofile:androidx.baselineprofile.gradle.plugin", version.ref = "baselineprofile_version" }
 
 [bundles]
-androidx = ["appcompat", "cardview", "webkit", "recyclerview", "preferencektx", "annotation", "browser", "biometric", "palette", "core-ktx", "constraintlayout", "multidex", "lifecycle-process", "lifecycle-runtime-ktx", "lifecycle-viewmodel-ktx", "work"]
-
+androidx = ["appcompat", "cardview", "webkit", "recyclerview", "preferencektx", "annotation", "browser", "biometric", "palette", "core-ktx", "constraintlayout", "lifecycle-process", "lifecycle-runtime-ktx", "lifecycle-viewmodel-ktx", "lifecycle-runtime-compose", "work"]
+room = ["room-runtime", "room-ktx"]
 
 [plugins]
 application = { id = "com.android.application", version.ref = "agp_version" }
 library = { id = "com.android.library", version.ref = "agp_version" }
+baselineprofile = { id = "androidx.baselineprofile", version.ref = "baselineprofile_version" }

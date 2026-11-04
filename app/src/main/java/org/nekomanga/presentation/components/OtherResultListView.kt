@@ -14,14 +14,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import kotlinx.collections.immutable.ImmutableList
 import org.nekomanga.domain.DisplayResult
 import org.nekomanga.presentation.theme.Size
 
 @Composable
 fun ResultList(
-    results: ImmutableList<DisplayResult>,
+    results: List<DisplayResult>,
     contentPadding: PaddingValues = PaddingValues(),
     onClick: (String) -> Unit = {},
 ) {
@@ -33,27 +31,16 @@ fun ResultList(
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(Size.small),
     ) {
-        items(results) { displayResult ->
-            ResultRow(
-                displayResult = displayResult,
-                onClick = { onClick(displayResult.uuid) },
-            )
+        items(items = results, key = { result -> result.uuid }) { displayResult ->
+            ResultRow(displayResult = displayResult, onClick = { onClick(displayResult.uuid) })
         }
     }
 }
 
 @Composable
-private fun ResultRow(
-    displayResult: DisplayResult,
-    onClick: () -> Unit,
-) {
-    ElevatedCard(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-        ) {
+private fun ResultRow(displayResult: DisplayResult, onClick: () -> Unit) {
+    ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(Size.smedium)) {
             Text(
                 text = displayResult.title,
                 style = MaterialTheme.typography.titleMedium,

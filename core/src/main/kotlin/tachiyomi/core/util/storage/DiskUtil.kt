@@ -1,17 +1,53 @@
 package tachiyomi.core.util.storage
 
 import android.content.Context
-import android.content.Intent
+import android.media.MediaScannerConnection
 import android.net.Uri
+import android.os.Environment
 import android.os.StatFs
+import android.text.format.Formatter
+import androidx.core.content.ContextCompat
 import com.hippo.unifile.UniFile
 import java.io.File
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import org.nekomanga.constants.Constants.TMP_FILE_SUFFIX
 import tachiyomi.core.util.lang.Hash
 
 object DiskUtil {
 
+    /** Returns the root folders of all the available external storages. */
+    fun getExternalStorages(context: Context): List<File> {
+        return ContextCompat.getExternalFilesDirs(context, null).filterNotNull().mapNotNull {
+            val file = File(it.absolutePath.substringBefore("/Android/"))
+            val state = Environment.getExternalStorageState(file)
+            if (
+                state == Environment.MEDIA_MOUNTED || state == Environment.MEDIA_MOUNTED_READ_ONLY
+            ) {
+                file
+            } else {
+                null
+            }
+        }
+    }
+
     fun hashKeyForDisk(key: String): String {
         return Hash.md5(key)
+    }
+
+    fun getCacheDirSize(context: Context): Long {
+        return File(context.cacheDir, "")
+            .listFiles()!!
+            .mapNotNull {
+                if (it.isFile && (it.name.endsWith(TMP_FILE_SUFFIX))) {
+                    getDirectorySize(it)
+                } else {
+                    null
+                }
+            }
+            .sum()
     }
 
     fun getDirectorySize(f: File): Long {
@@ -28,11 +64,48 @@ object DiskUtil {
         return size
     }
 
-    /** Gets the available space for the disk that a file path points to, in bytes. */
+    /**
+     * Gets the available space for the disk that a file path points to, in bytes. A SAF document
+     * URI's path is not a filesystem path, so this stats the path UniFile resolves for the
+     * document, or returns -1 when UniFile can't resolve one.
+     */
     fun getAvailableStorageSpace(f: UniFile): Long {
         return try {
-            val stat = StatFs(f.uri.path)
+            val stat = StatFs(f.filePath ?: return -1L)
             stat.availableBlocksLong * stat.blockSizeLong
+        } catch (_: Exception) {
+            -1L
+        }
+    }
+
+    /**
+     * Gets the total space for the disk that a file path points to, in bytes, or -1 when UniFile
+     * can't resolve a filesystem path for [f].
+     */
+    fun getTotalStorageSpace(f: UniFile): Long {
+        return try {
+            val stat = StatFs(f.filePath ?: return -1L)
+            stat.blockCountLong * stat.blockSizeLong
+        } catch (_: Exception) {
+            -1L
+        }
+    }
+
+    /** Gets the available space for the disk that a file path points to, in bytes. */
+    fun getAvailableStorageSpace(file: File): Long {
+        return try {
+            val stat = StatFs(file.absolutePath)
+            stat.availableBlocksLong * stat.blockSizeLong
+        } catch (_: Exception) {
+            -1L
+        }
+    }
+
+    /** Gets the total space for the disk that a file path points to, in bytes. */
+    fun getTotalStorageSpace(file: File): Long {
+        return try {
+            val stat = StatFs(file.absolutePath)
+            stat.blockCountLong * stat.blockSizeLong
         } catch (_: Exception) {
             -1L
         }
@@ -42,8 +115,7 @@ object DiskUtil {
     fun createNoMediaFile(dir: UniFile?, context: Context?) {
         if (dir != null && dir.exists()) {
             val nomedia = dir.findFile(NOMEDIA_FILE)
-            if (nomedia == null) {
-                dir.createFile(NOMEDIA_FILE)!!
+            if (nomedia == null && dir.createFile(NOMEDIA_FILE) != null) {
                 context?.let { scanMedia(it, dir.uri) }
             }
         }
@@ -51,15 +123,14 @@ object DiskUtil {
 
     /** Scans the given file so that it can be shown in gallery apps, for example. */
     fun scanMedia(context: Context, file: File) {
-        scanMedia(context, Uri.fromFile(file))
+        MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null)
     }
 
     /** Scans the given file so that it can be shown in gallery apps, for example. */
     fun scanMedia(context: Context, uri: Uri) {
-        val action = Intent.ACTION_MEDIA_SCANNER_SCAN_FILE
-        val mediaScanIntent = Intent(action)
-        mediaScanIntent.data = uri
-        context.sendBroadcast(mediaScanIntent)
+        if (uri.scheme == "file") {
+            uri.path?.let { MediaScannerConnection.scanFile(context, arrayOf(it), null, null) }
+        }
     }
 
     /**
@@ -109,8 +180,58 @@ object DiskUtil {
             '\\',
             '|',
             '~',
+            ',',
             0x7f.toChar() -> false
             else -> true
+        }
+    }
+
+    /** Returns real size of directory in human readable format. */
+    fun readableDiskSize(context: Context, file: File): String {
+        return Formatter.formatFileSize(context, getDirectorySize(file))
+    }
+
+    /** Returns real size of directory in human readable format. */
+    fun readableDiskSize(context: Context, bytes: Long): String {
+        return Formatter.formatFileSize(context, bytes)
+    }
+
+    fun cleanupDiskSpace(directory: File, context: Context, isTmpFileLookup: Boolean = false) {
+        if (isTmpFileLookup) {
+            File(context.cacheDir, "").listFiles()?.asSequence()?.forEach {
+                if (it.isFile && (it.name.endsWith(TMP_FILE_SUFFIX))) {
+                    it.delete()
+                }
+            }
+        } else {
+            directory.listFiles()?.asSequence()?.forEach { it.delete() }
+        }
+    }
+
+    fun observeDiskSpace(
+        directory: File,
+        context: Context,
+        isTmpFileLookup: Boolean = false,
+    ): Flow<String> = flow {
+        while (true) {
+            if (isTmpFileLookup) {
+                val tmpFiles =
+                    File(context.cacheDir, "")
+                        .listFiles()!!
+                        .mapNotNull {
+                            if (it.isFile && (it.name.endsWith(TMP_FILE_SUFFIX))) {
+                                getDirectorySize(it)
+                            } else {
+                                null
+                            }
+                        }
+                        .sum()
+                emit(readableDiskSize(context, tmpFiles))
+            } else {
+
+                emit(readableDiskSize(context, directory))
+            }
+            delay(3.seconds)
         }
     }
 

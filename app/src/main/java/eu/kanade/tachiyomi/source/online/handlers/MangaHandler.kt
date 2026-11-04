@@ -1,37 +1,43 @@
 package eu.kanade.tachiyomi.source.online.handlers
 
+import com.github.michaelbull.result.Err
 import com.github.michaelbull.result.Ok
 import com.github.michaelbull.result.Result
 import com.github.michaelbull.result.andThen
 import com.github.michaelbull.result.getOrElse
 import com.github.michaelbull.result.mapBoth
+import com.github.michaelbull.result.orElse
 import com.github.michaelbull.result.zip
 import com.skydoves.sandwich.getOrThrow
 import com.skydoves.sandwich.onFailure
 import eu.kanade.tachiyomi.data.database.models.SourceArtwork
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.network.services.MangaDexAuthorizedUserService
 import eu.kanade.tachiyomi.network.services.MangaDexService
 import eu.kanade.tachiyomi.network.services.NetworkServices
 import eu.kanade.tachiyomi.source.MangaDetailChapterInformation
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.uuid
-import eu.kanade.tachiyomi.source.online.models.dto.AggregateVolume
+import eu.kanade.tachiyomi.source.online.models.dto.AggregateDto
 import eu.kanade.tachiyomi.source.online.models.dto.ChapterDataDto
 import eu.kanade.tachiyomi.source.online.models.dto.ChapterListDto
-import eu.kanade.tachiyomi.source.online.models.dto.asMdMap
+import eu.kanade.tachiyomi.source.online.models.dto.ForumThreadDto
 import eu.kanade.tachiyomi.source.online.utils.MdUtil
 import eu.kanade.tachiyomi.util.getOrResultError
 import eu.kanade.tachiyomi.util.log
+import eu.kanade.tachiyomi.util.system.toInt
 import eu.kanade.tachiyomi.util.throws
+import kotlin.math.ceil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
+import org.nekomanga.constants.Constants.NO_GROUP
 import org.nekomanga.constants.MdConstants
 import org.nekomanga.domain.manga.Stats
 import org.nekomanga.domain.network.ResultError
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -40,22 +46,31 @@ import uy.kohesive.injekt.injectLazy
 class MangaHandler {
     private val artworkHandler: ArtworkHandler by injectLazy()
     val service: MangaDexService by lazy { Injekt.get<NetworkServices>().service }
-    private val preferencesHelper: PreferencesHelper by injectLazy()
+    val authService: MangaDexAuthorizedUserService by lazy {
+        Injekt.get<NetworkServices>().authService
+    }
+    private val mangaDexPreferences: MangaDexPreferences by injectLazy()
     private val apiMangaParser: ApiMangaParser by injectLazy()
 
     suspend fun fetchMangaAndChapterDetails(
         manga: SManga,
-        fetchArtwork: Boolean
+        fetchArtwork: Boolean,
     ): Result<MangaDetailChapterInformation, ResultError> {
         TimberKt.d { "fetch manga and chapter details" }
 
         return withContext(Dispatchers.IO) {
-            val detailsManga =
-                withContext(Dispatchers.Default) { fetchMangaDetails(manga.uuid(), fetchArtwork) }
-            val chapterList =
-                withContext(Dispatchers.Default) {
-                    fetchChapterList(manga.uuid(), manga.last_chapter_number)
-                }
+            val detailsMangaJob = async { fetchMangaDetailsInternal(manga.uuid(), fetchArtwork) }
+            val chapterListJob = async {
+                fetchChapterList(
+                    manga.uuid(),
+                    manga.last_chapter_number,
+                    manga.last_volume_number,
+                    mangaDexPreferences.includeUnavailableChapters().get(),
+                )
+            }
+
+            val detailsManga = detailsMangaJob.await()
+            val chapterList = chapterListJob.await()
 
             return@withContext zip(
                 { detailsManga },
@@ -82,56 +97,42 @@ class MangaHandler {
         }
     }
 
-    suspend fun fetchMangaDetails(
-        mangaUUID: String,
-        fetchArtwork: Boolean
-    ): Result<Pair<SManga, List<SourceArtwork>>, ResultError> {
-        return withContext(Dispatchers.IO) {
-            val artworks = artworkAsync(mangaUUID, fetchArtwork)
-            val stats = statsAsync(mangaUUID)
-            val simpleChapters = simpleChaptersAsync(mangaUUID)
-            val manga = mangaAsync(mangaUUID)
-
-            manga
-                .await()
-                .andThen { mangaDto ->
-                    apiMangaParser.mangaDetailsParse(
-                        mangaDto.data,
-                        stats.await(),
-                        simpleChapters.await()
-                    )
-                }
-                .andThen { sManga -> Ok(sManga to artworks.await()) }
-        }
-    }
-
-    private fun CoroutineScope.simpleChaptersAsync(mangaUUID: String) = async {
-        service
-            .aggregateChapters(mangaUUID, MdUtil.getLangsToShow(preferencesHelper))
-            .getOrResultError("trying to aggregate for $mangaUUID")
-            .mapBoth(
-                success = { aggregateDto ->
-                    aggregateDto.volumes
-                        .asMdMap<AggregateVolume>()
-                        .values
-                        .flatMap { it.chapters.values }
-                        .map { it.chapter }
-                },
-                failure = { emptyList() },
-            )
-    }
-
-    private fun CoroutineScope.mangaAsync(
-        mangaUUID: String,
-    ) = async { service.viewManga(mangaUUID).getOrResultError("Error getting Manga Detail") }
-
-    private fun CoroutineScope.artworkAsync(
+    private suspend fun CoroutineScope.fetchMangaDetailsInternal(
         mangaUUID: String,
         fetchArtwork: Boolean,
-    ) = async {
+    ): Result<Pair<SManga, List<SourceArtwork>>, ResultError> {
+        // 'this' is already a CoroutineScope, so we can call the async helpers
+        val artworks = artworkAsync(mangaUUID, fetchArtwork)
+        val stats = statsAsync(mangaUUID)
+        val manga = mangaAsync(mangaUUID)
+
+        return manga
+            .await()
+            .andThen { mangaDto -> apiMangaParser.mangaDetailsParse(mangaDto.data, stats.await()) }
+            .andThen { sManga -> Ok(sManga to artworks.await()) }
+    }
+
+    suspend fun fetchMangaDetails(
+        mangaUUID: String,
+        fetchArtwork: Boolean,
+    ): Result<Pair<SManga, List<SourceArtwork>>, ResultError> {
+        return withContext(Dispatchers.IO) { fetchMangaDetailsInternal(mangaUUID, fetchArtwork) }
+    }
+
+    private fun CoroutineScope.mangaAsync(mangaUUID: String) = async {
+        service.viewManga(mangaUUID).getOrResultError("Error getting Manga Detail")
+    }
+
+    private fun CoroutineScope.artworkAsync(mangaUUID: String, fetchArtwork: Boolean) = async {
         when (fetchArtwork) {
             true -> artworkHandler.getArtwork(mangaUUID).getOrElse { emptyList() }
             false -> emptyList()
+        }
+    }
+
+    suspend fun getAggregate(mangaUUID: String): Result<AggregateDto, ResultError> {
+        return withContext(Dispatchers.IO) {
+            service.getAggregate(mangaUUID).getOrResultError("Error getting aggregate")
         }
     }
 
@@ -152,10 +153,10 @@ class MangaHandler {
                                     false -> null
                                 }
                             Stats(
-                                rating = strRating,
+                                rating = strRating ?: "",
                                 follows = stats.follows.toString(),
-                                threadId = stats.comments?.threadId?.toString(),
-                                repliesCount = stats.comments?.repliesCount?.toString(),
+                                threadId = stats.comments?.threadId?.toString() ?: "",
+                                repliesCount = stats.comments?.repliesCount?.toString() ?: "",
                             )
                         }
                     }
@@ -166,12 +167,14 @@ class MangaHandler {
 
     suspend fun fetchChapterList(
         mangaUUID: String,
-        lastChapterNumber: Int?
+        lastChapterNumber: Int?,
+        lastVolumeNumber: Int?,
+        includeUnavailable: Boolean,
     ): Result<List<SChapter>, ResultError> {
         return withContext(Dispatchers.IO) {
-            val langs = MdUtil.getLangsToShow(preferencesHelper)
+            val langs = MdUtil.getLangsToShow(mangaDexPreferences)
 
-            fetchOffset(mangaUUID, langs, 0)
+            fetchOffset(mangaUUID, langs, includeUnavailable, 0)
                 .andThen { chapterListDto ->
                     Ok(
                         when (chapterListDto.total > chapterListDto.limit) {
@@ -180,16 +183,26 @@ class MangaHandler {
                                     fetchRestOfChapters(
                                         mangaUUID,
                                         langs,
+                                        includeUnavailable,
                                         chapterListDto.limit,
-                                        chapterListDto.total
+                                        chapterListDto.total,
                                     )
+
                             false -> chapterListDto.data
-                        },
+                        }
                     )
                 }
                 .andThen { results ->
                     val groupMap = getGroupMap(results)
-                    apiMangaParser.chapterListParse(lastChapterNumber, results, groupMap)
+                    val uploaderMap = getUploaderMap(results, groupMap)
+
+                    apiMangaParser.chapterListParse(
+                        lastChapterNumber,
+                        lastVolumeNumber,
+                        results,
+                        groupMap,
+                        uploaderMap,
+                    )
                 }
         }
     }
@@ -197,14 +210,22 @@ class MangaHandler {
     private suspend fun fetchRestOfChapters(
         mangaUUID: String,
         langs: List<String>,
+        includeUnavailable: Boolean,
         limit: Int,
-        total: Int
+        total: Int,
     ): List<ChapterDataDto> {
         return withContext(Dispatchers.IO) {
-            val totalRequestNo = (total / limit)
+            val itemsRemaining = total - limit
+            if (itemsRemaining <= 0) {
+                return@withContext emptyList()
+            }
 
-            (1..totalRequestNo)
-                .map { pos -> async { fetchOffset(mangaUUID, langs, pos * limit) } }
+            val pagesToFetch = ceil(itemsRemaining.toDouble() / limit.toDouble()).toInt()
+
+            (1..pagesToFetch)
+                .map { pos ->
+                    async { fetchOffset(mangaUUID, langs, includeUnavailable, pos * limit) }
+                }
                 .awaitAll()
                 .mapNotNull { it.getOrElse { null }?.data }
                 .flatten()
@@ -215,24 +236,63 @@ class MangaHandler {
         return service
             .chapterStatistics(chapterUUID)
             .getOrResultError("Trying to get chapter comments")
-            .andThen { Ok(it.statistics[chapterUUID]?.comments?.threadId?.toString()) }
+            .andThen {
+                Ok(
+                    it.statistics[chapterUUID]?.comments?.threadId?.toString()
+                        ?: return@andThen Err("No thread exists")
+                )
+            }
+            .orElse {
+                authService
+                    .createForumThread(ForumThreadDto(chapterUUID, "chapter"))
+                    .getOrResultError("Trying to create forum thread")
+                    .andThen { Ok(it.data.id.toString()) }
+            }
     }
 
     private suspend fun fetchOffset(
         mangaUUID: String,
         langs: List<String>,
-        offset: Int
+        includeUnavailable: Boolean,
+        offset: Int,
     ): Result<ChapterListDto, ResultError> {
         return service
-            .viewChapters(mangaUUID, langs, offset)
+            .viewChapters(mangaUUID, langs, includeUnavailable.toInt().toString(), offset)
             .getOrResultError("Trying to view chapters")
     }
 
     private fun getGroupMap(results: List<ChapterDataDto>): Map<String, String> {
         return results
-            .map { chapter -> chapter.relationships }
-            .flatten()
-            .filter { it.type == MdConstants.Types.scanlator }
-            .associate { it.id to it.attributes!!.name!! }
+            .flatMap { it.relationships }
+            .mapNotNull { relationship ->
+                val name = relationship.attributes?.name
+                if (
+                    relationship.type == MdConstants.Types.scanlator &&
+                        !name.isNullOrBlank() &&
+                        !NO_GROUP.equals(name, true)
+                ) {
+                    relationship.id to name
+                } else {
+                    null
+                }
+            }
+            .toMap()
+    }
+
+    private fun getUploaderMap(
+        results: List<ChapterDataDto>,
+        groups: Map<String, String>,
+    ): Map<String, String> {
+        return results
+            .asSequence()
+            .flatMap { chapter ->
+                if (chapter.relationships.any { groups.containsKey(it.id) }) {
+                    return@flatMap emptyList()
+                }
+                chapter.relationships
+            }
+            .filter { it.type == MdConstants.Types.uploader }
+            .distinctBy { it.id }
+            .associate { it.id to (it.attributes?.username ?: "Deleted uploader") }
     }
 }

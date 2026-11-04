@@ -1,0 +1,157 @@
+package org.nekomanga.presentation.screens.about
+
+import android.app.Application
+import android.os.Build
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.updater.AppDownloadInstallJob
+import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
+import eu.kanade.tachiyomi.data.updater.AppUpdateResult
+import eu.kanade.tachiyomi.data.updater.Release
+import eu.kanade.tachiyomi.ui.main.AppSnackbarManager
+import eu.kanade.tachiyomi.util.system.launchNonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.nekomanga.BuildConfig
+import org.nekomanga.R
+import org.nekomanga.core.security.SecurityPreferences
+import org.nekomanga.domain.snackbar.SnackbarState
+import org.nekomanga.logging.TimberKt
+import org.nekomanga.usecases.preferences.GetFormattedBuildTimeUseCase
+import uy.kohesive.injekt.injectLazy
+
+class AboutViewModel : ViewModel() {
+    private val updateChecker by lazy { AppUpdateChecker() }
+    private val preferences: PreferencesHelper by injectLazy()
+    private val application: Application by injectLazy()
+
+    private val securityPreferences: SecurityPreferences by injectLazy()
+    private val getFormattedBuildTimeUseCase: GetFormattedBuildTimeUseCase by injectLazy()
+
+    val appSnackbarManager: AppSnackbarManager by injectLazy()
+
+    private val _aboutScreenState =
+        MutableStateFlow(
+            AboutScreenState(
+                buildTime = getFormattedBuildTime(),
+                incognitoMode = securityPreferences.incognitoMode().get(),
+            )
+        )
+    val aboutScreenState: StateFlow<AboutScreenState> = _aboutScreenState.asStateFlow()
+
+    private fun getFormattedBuildTime(): String {
+        return getFormattedBuildTimeUseCase(BuildConfig.BUILD_TIME)
+    }
+
+    fun notOnlineSnackbar() {
+        viewModelScope.launch {
+            appSnackbarManager.showSnackbar(
+                SnackbarState(messageRes = R.string.no_network_connection)
+            )
+        }
+    }
+
+    /** Checks version and shows a user prompt if an update is available. */
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            if (aboutScreenState.value.checkingForUpdates) return@launch
+
+            _aboutScreenState.update { it.copy(checkingForUpdates = true) }
+
+            appSnackbarManager.showSnackbar(
+                SnackbarState(messageRes = R.string.checking_for_updates)
+            )
+
+            val update = runCatching {
+                updateChecker.checkForUpdate(isUserPrompt = true)
+            }
+                .getOrElse { error -> AppUpdateResult.CantCheckForUpdate(error.message ?: "Error") }
+            when (update) {
+                is AppUpdateResult.CantCheckForUpdate -> {
+                    appSnackbarManager.showSnackbar(SnackbarState(message = update.reason))
+                }
+                is AppUpdateResult.NoNewUpdate -> {
+                    appSnackbarManager.showSnackbar(
+                        SnackbarState(messageRes = R.string.no_new_updates_available)
+                    )
+                }
+                is AppUpdateResult.NewUpdate -> {
+                    _aboutScreenState.update {
+                        it.copy(shouldShowUpdateDialog = true, updateResult = update)
+                    }
+                }
+            }
+            _aboutScreenState.update { it.copy(checkingForUpdates = false) }
+        }
+    }
+
+    fun hideUpdateDialog() {
+        viewModelScope.launch {
+            _aboutScreenState.update { it.copy(shouldShowUpdateDialog = false) }
+        }
+    }
+
+    fun downloadUpdate(release: Release) {
+        viewModelScope.launchNonCancellable {
+            try {
+                AppDownloadInstallJob.start(
+                    application,
+                    release.downloadLink,
+                    true,
+                    version = release.version,
+                )
+            } catch (e: Exception) {
+                TimberKt.e(e) { "Failed to start update download" }
+            }
+        }
+    }
+
+    private var versionClickCount = 0
+    private var lastVersionClickTime = 0L
+
+    fun onVersionClicked() {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastVersionClickTime > DEV_MODE_CLICK_TIMEOUT_MS) {
+            versionClickCount = 0
+        }
+        lastVersionClickTime = currentTime
+        versionClickCount++
+
+        if (versionClickCount == DEV_MODE_CLICK_COUNT) {
+            versionClickCount = 0
+            val newValue = !preferences.developerMode().get()
+            preferences.developerMode().set(newValue)
+            viewModelScope.launch {
+                appSnackbarManager.showSnackbar(
+                    SnackbarState(
+                        messageRes =
+                            if (newValue) R.string.developer_mode_enabled
+                            else R.string.developer_mode_disabled
+                    )
+                )
+            }
+        }
+    }
+
+    fun onVersionLongClicked() {
+        viewModelScope.launch {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                appSnackbarManager.showSnackbar(
+                    SnackbarState(
+                        messageRes = R.string._copied_to_clipboard,
+                        fieldRes = R.string.build_information,
+                    )
+                )
+            }
+        }
+    }
+
+    companion object {
+        private const val DEV_MODE_CLICK_COUNT = 7
+        private const val DEV_MODE_CLICK_TIMEOUT_MS = 500L
+    }
+}

@@ -1,34 +1,38 @@
 package eu.kanade.tachiyomi.data.library
 
+import android.Manifest
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
-import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import coil.Coil
-import coil.request.CachePolicy
-import coil.request.ImageRequest
-import coil.transform.CircleCropTransformation
+import coil3.imageLoader
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
+import coil3.request.transformations
+import coil3.toBitmap
+import coil3.transform.CircleCropTransformation
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.database.models.LibraryManga
+import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
-import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.ui.main.DeepLinks
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.util.lang.chop
+import eu.kanade.tachiyomi.util.manga.toDisplayManga
 import eu.kanade.tachiyomi.util.system.notification
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notificationManager
-import kotlinx.collections.immutable.toImmutableMap
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
 import org.nekomanga.R
 import org.nekomanga.core.security.SecurityPreferences
+import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.injectLazy
 
 class LibraryUpdateNotifier(private val context: Context) {
@@ -48,7 +52,7 @@ class LibraryUpdateNotifier(private val context: Context) {
     /** Cached progress notification to avoid creating a lot. */
     val progressNotificationBuilder by lazy {
         context.notificationBuilder(Notifications.Channel.Library.Progress) {
-            setContentTitle(context.getString(R.string.app_name))
+            setContentTitle(context.getString(R.string.updating_library))
             setSmallIcon(R.drawable.ic_refresh_24dp)
             setLargeIcon(notificationBitmap)
             setOngoing(true)
@@ -69,12 +73,12 @@ class LibraryUpdateNotifier(private val context: Context) {
      * @param current the current progress.
      * @param total the total progress.
      */
-    fun showProgressNotification(manga: SManga, current: Int, total: Int) {
+    fun showProgressNotification(manga: Manga, current: Int, total: Int) {
         val title =
             if (securityPreferences.hideNotificationContent().get()) {
                 context.getString(R.string.checking_for_new_chapters)
             } else {
-                manga.title
+                manga.displayTitle()
             }
 
         context.notificationManager.notify(
@@ -90,14 +94,18 @@ class LibraryUpdateNotifier(private val context: Context) {
      * Shows notification containing update entries that failed with action to open full log.
      *
      * @param errors List of entry titles that failed to update.
-     * @param uri Uri for error log file containing all titles that failed.
+     * @param uri Uri for error log file containing all titles that failed, null when the file could
+     *   not be written.
      */
-    fun showUpdateErrorNotification(errors: List<String>, uri: Uri) {
+    fun showUpdateErrorNotification(errors: List<String>, uri: Uri?) {
         if (errors.isEmpty()) {
             return
         }
 
-        val pendingIntent = NotificationReceiver.openErrorOrSkippedLogPendingActivity(context, uri)
+        // Without a log file the notification only opens the app.
+        val pendingIntent =
+            uri?.let { NotificationReceiver.openErrorOrSkippedLogPendingActivity(context, it) }
+                ?: getNotificationIntent()
 
         context.notificationManager.notify(
             Notifications.Id.Library.Error,
@@ -109,17 +117,17 @@ class LibraryUpdateNotifier(private val context: Context) {
                     setContentText(context.getString(R.string.tap_to_see_details))
                     setStyle(
                         NotificationCompat.BigTextStyle()
-                            .bigText(
-                                errors.joinToString("\n") { it.chop(TITLE_MAX_LEN) },
-                            ),
+                            .bigText(errors.joinToString("\n") { it.chop(TITLE_MAX_LEN) })
                     )
                     setContentIntent(pendingIntent)
                     setSmallIcon(R.drawable.ic_neko_notification)
-                    addAction(
-                        R.drawable.ic_help_24dp,
-                        context.getString(R.string.open_log),
-                        pendingIntent,
-                    )
+                    if (uri != null) {
+                        addAction(
+                            R.drawable.ic_help_24dp,
+                            context.getString(R.string.open_log),
+                            pendingIntent,
+                        )
+                    }
                 }
                 .build(),
         )
@@ -130,14 +138,18 @@ class LibraryUpdateNotifier(private val context: Context) {
      * and learn more.
      *
      * @param skips List of entry titles that were skipped.
-     * @param uri Uri for error log file containing all titles that were skipped.
+     * @param uri Uri for error log file containing all titles that were skipped, null when the file
+     *   could not be written.
      */
-    fun showUpdateSkippedNotification(skips: List<String>, uri: Uri) {
+    fun showUpdateSkippedNotification(skips: List<String>, uri: Uri?) {
         if (skips.isEmpty()) {
             return
         }
 
-        val pendingIntent = NotificationReceiver.openErrorOrSkippedLogPendingActivity(context, uri)
+        // Without a log file the notification only opens the app.
+        val pendingIntent =
+            uri?.let { NotificationReceiver.openErrorOrSkippedLogPendingActivity(context, it) }
+                ?: getNotificationIntent()
 
         context.notificationManager.notify(
             Notifications.Id.Library.Skipped,
@@ -149,17 +161,17 @@ class LibraryUpdateNotifier(private val context: Context) {
                     setContentText(context.getString(R.string.tap_to_see_details))
                     setStyle(
                         NotificationCompat.BigTextStyle()
-                            .bigText(
-                                skips.joinToString("\n") { it.chop(TITLE_MAX_LEN) },
-                            ),
+                            .bigText(skips.joinToString("\n") { it.chop(TITLE_MAX_LEN) })
                     )
                     setContentIntent(pendingIntent)
                     setSmallIcon(R.drawable.ic_neko_notification)
-                    addAction(
-                        R.drawable.ic_help_24dp,
-                        context.getString(R.string.open_log),
-                        pendingIntent,
-                    )
+                    if (uri != null) {
+                        addAction(
+                            R.drawable.ic_help_24dp,
+                            context.getString(R.string.open_log),
+                            pendingIntent,
+                        )
+                    }
                 }
                 .build(),
         )
@@ -168,137 +180,146 @@ class LibraryUpdateNotifier(private val context: Context) {
     /**
      * Shows the notification containing the result of the update done by the service.
      *
-     * @param updates a list of manga with new updates.
+     * @param newUpdates a list of manga with new updates.
      */
-    fun showResultNotification(newUpdates: Map<LibraryManga, Array<Chapter>>) {
+    suspend fun showResultNotification(newUpdates: Map<LibraryManga, Array<Chapter>>) {
+        if (newUpdates.isEmpty()) return
         // create a copy of the list since it will be cleared by the time it is used
-        val updates = newUpdates.toImmutableMap()
-        GlobalScope.launch {
-            val notifications = ArrayList<Pair<Notification, Int>>()
-            if (!securityPreferences.hideNotificationContent().get()) {
-                updates.forEach {
-                    val manga = it.key
-                    val chapters = it.value
-                    val chapterNames = chapters.map { chapter -> chapter.name }
-                    notifications.add(
-                        Pair(
-                            context.notification(Notifications.CHANNEL_NEW_CHAPTERS) {
-                                setSmallIcon(R.drawable.ic_neko_notification)
-                                try {
-                                    val request =
-                                        ImageRequest.Builder(context)
-                                            .data(manga)
-                                            .networkCachePolicy(CachePolicy.DISABLED)
-                                            .diskCachePolicy(CachePolicy.ENABLED)
-                                            .transformations(CircleCropTransformation())
-                                            .size(width = ICON_SIZE, height = ICON_SIZE)
-                                            .build()
+        val updates = newUpdates.toMap()
+        val notifications = ArrayList<Pair<Notification, Int>>()
+        if (!securityPreferences.hideNotificationContent().get()) {
+            updates.forEach {
+                val manga = it.key
+                val chapters = it.value
+                val chapterNames = chapters.map { chapter -> chapter.name }
+                notifications.add(
+                    Pair(
+                        context.notification(Notifications.CHANNEL_NEW_CHAPTERS) {
+                            setSmallIcon(R.drawable.ic_neko_notification)
+                            try {
+                                val artwork = manga.toDisplayManga().currentArtwork
+                                val request =
+                                    ImageRequest.Builder(context)
+                                        .data(artwork)
+                                        .networkCachePolicy(CachePolicy.DISABLED)
+                                        .diskCachePolicy(CachePolicy.ENABLED)
+                                        .transformations(CircleCropTransformation())
+                                        .size(width = ICON_SIZE, height = ICON_SIZE)
+                                        .build()
 
-                                    Coil.imageLoader(context).execute(request).drawable?.let {
-                                        drawable ->
-                                        setLargeIcon((drawable as? BitmapDrawable)?.bitmap)
-                                    }
-                                } catch (e: Exception) {}
-                                setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
-                                setContentTitle(manga.title)
-                                color = ContextCompat.getColor(context, R.color.iconOutline)
-                                val chaptersNames =
-                                    if (chapterNames.size > MAX_CHAPTERS) {
-                                        "${chapterNames.take(MAX_CHAPTERS - 1).joinToString(", ")}, " +
-                                            context.resources.getQuantityString(
-                                                R.plurals.notification_and_n_more,
-                                                (chapterNames.size - (MAX_CHAPTERS - 1)),
-                                                (chapterNames.size - (MAX_CHAPTERS - 1)),
-                                            )
-                                    } else {
-                                        chapterNames.joinToString(", ")
-                                    }
-                                setContentText(chaptersNames)
-                                setStyle(NotificationCompat.BigTextStyle().bigText(chaptersNames))
-                                priority = NotificationCompat.PRIORITY_HIGH
-                                setGroup(Notifications.GROUP_NEW_CHAPTERS)
-                                setContentIntent(
-                                    NotificationReceiver.openChapterPendingActivity(
-                                        context,
-                                        manga,
-                                        chapters.first(),
-                                    ),
+                                context.imageLoader.execute(request).image?.let { drawable ->
+                                    setLargeIcon(drawable.toBitmap())
+                                }
+                            } catch (e: Exception) {
+                                TimberKt.e(e) {
+                                    "Failed to load notification icon for ${manga.displayTitle()}"
+                                }
+                            }
+                            setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
+                            setContentTitle(manga.displayTitle())
+                            color = ContextCompat.getColor(context, R.color.iconOutline)
+                            val chaptersNames =
+                                if (chapterNames.size > MAX_CHAPTERS) {
+                                    "${chapterNames.take(MAX_CHAPTERS - 1).joinToString(", ")}, " +
+                                        context.resources.getQuantityString(
+                                            R.plurals.notification_and_n_more,
+                                            (chapterNames.size - (MAX_CHAPTERS - 1)),
+                                            (chapterNames.size - (MAX_CHAPTERS - 1)),
+                                        )
+                                } else {
+                                    chapterNames.joinToString(", ")
+                                }
+                            setContentText(chaptersNames)
+                            setStyle(NotificationCompat.BigTextStyle().bigText(chaptersNames))
+                            priority = NotificationCompat.PRIORITY_HIGH
+                            setGroup(Notifications.GROUP_NEW_CHAPTERS)
+                            setContentIntent(
+                                NotificationReceiver.openChapterPendingActivity(
+                                    context,
+                                    manga,
+                                    chapters.first(),
                                 )
-                                addAction(
-                                    R.drawable.ic_eye_24dp,
-                                    context.getString(R.string.mark_read),
-                                    NotificationReceiver.markAsReadPendingBroadcast(
-                                        context,
-                                        manga,
-                                        chapters,
-                                        Notifications.ID_NEW_CHAPTERS,
-                                    ),
-                                )
-                                addAction(
-                                    R.drawable.ic_book_24dp,
-                                    context.getString(R.string.view),
-                                    NotificationReceiver.openChapterPendingActivity(
-                                        context,
-                                        manga,
-                                        Notifications.ID_NEW_CHAPTERS,
-                                    ),
-                                )
-                                addAction(
-                                    android.R.drawable.stat_sys_download_done,
-                                    context.getString(R.string.download),
-                                    NotificationReceiver.downloadChaptersPendingBroadcast(
-                                        context,
-                                        manga,
-                                        chapters,
-                                        Notifications.ID_NEW_CHAPTERS,
-                                    ),
-                                )
-                                setAutoCancel(true)
-                            },
-                            manga.id.hashCode(),
-                        ),
-                    )
-                }
-            }
-
-            NotificationManagerCompat.from(context).apply {
-                notify(
-                    Notifications.ID_NEW_CHAPTERS,
-                    context.notification(Notifications.CHANNEL_NEW_CHAPTERS) {
-                        setSmallIcon(R.drawable.ic_neko_notification)
-                        setLargeIcon(notificationBitmap)
-                        setContentTitle(context.getString(R.string.new_chapters_found))
-                        color = ContextCompat.getColor(context, R.color.iconOutline)
-                        if (updates.size > 1) {
-                            setContentText(
-                                context.resources.getQuantityString(
-                                    R.plurals.for_n_titles,
-                                    updates.size,
-                                    updates.size,
+                            )
+                            addAction(
+                                R.drawable.ic_eye_24dp,
+                                context.getString(R.string.mark_read),
+                                NotificationReceiver.markAsReadPendingBroadcast(
+                                    context,
+                                    manga,
+                                    chapters,
+                                    Notifications.ID_NEW_CHAPTERS,
                                 ),
                             )
-                            if (!securityPreferences.hideNotificationContent().get()) {
-                                setStyle(
-                                    NotificationCompat.BigTextStyle()
-                                        .bigText(
-                                            updates.keys.joinToString("\n") { it.title.chop(45) },
-                                        ),
-                                )
-                            }
-                        } else if (!securityPreferences.hideNotificationContent().get()) {
-                            setContentText(updates.keys.first().title.chop(45))
-                        }
-                        priority = NotificationCompat.PRIORITY_HIGH
-                        setGroup(Notifications.GROUP_NEW_CHAPTERS)
-                        setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
-                        setGroupSummary(true)
-                        setContentIntent(getNotificationIntent())
-                        setAutoCancel(true)
-                    },
+                            addAction(
+                                R.drawable.ic_book_24dp,
+                                context.getString(R.string.view),
+                                NotificationReceiver.openChapterPendingActivity(
+                                    context,
+                                    manga,
+                                    Notifications.ID_NEW_CHAPTERS,
+                                ),
+                            )
+                            addAction(
+                                android.R.drawable.stat_sys_download_done,
+                                context.getString(R.string.download),
+                                NotificationReceiver.downloadChaptersPendingBroadcast(
+                                    context,
+                                    manga,
+                                    chapters,
+                                    Notifications.ID_NEW_CHAPTERS,
+                                ),
+                            )
+                            setAutoCancel(true)
+                        },
+                        manga.id.hashCode(),
+                    )
                 )
-
-                notifications.forEach { notify(it.second, it.first) }
             }
+        }
+
+        NotificationManagerCompat.from(context).apply {
+            if (
+                ActivityCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return@apply
+            }
+            notify(
+                Notifications.ID_NEW_CHAPTERS,
+                context.notification(Notifications.CHANNEL_NEW_CHAPTERS) {
+                    setSmallIcon(R.drawable.ic_neko_notification)
+                    setLargeIcon(notificationBitmap)
+                    setContentTitle(context.getString(R.string.new_chapters_found))
+                    color = ContextCompat.getColor(context, R.color.iconOutline)
+                    if (updates.size > 1) {
+                        setContentText(
+                            context.resources.getQuantityString(
+                                R.plurals.for_n_titles,
+                                updates.size,
+                                updates.size,
+                            )
+                        )
+                        if (!securityPreferences.hideNotificationContent().get()) {
+                            setStyle(
+                                NotificationCompat.BigTextStyle()
+                                    .bigText(updates.keys.joinToString("\n") { it.title.chop(45) })
+                            )
+                        }
+                    } else if (!securityPreferences.hideNotificationContent().get()) {
+                        setContentText(updates.keys.first().title.chop(45))
+                    }
+                    priority = NotificationCompat.PRIORITY_HIGH
+                    setGroup(Notifications.GROUP_NEW_CHAPTERS)
+                    setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
+                    setGroupSummary(true)
+                    setContentIntent(getNotificationIntent())
+                    setAutoCancel(true)
+                },
+            )
+
+            notifications.forEach { notify(it.second, it.first) }
         }
     }
 
@@ -312,7 +333,7 @@ class LibraryUpdateNotifier(private val context: Context) {
         val intent =
             Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                action = MainActivity.SHORTCUT_RECENTLY_UPDATED
+                action = DeepLinks.Actions.RecentlyUpdated
             }
         return PendingIntent.getActivity(
             context,

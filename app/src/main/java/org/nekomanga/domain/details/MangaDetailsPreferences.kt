@@ -1,7 +1,9 @@
 package org.nekomanga.domain.details
 
 import eu.kanade.tachiyomi.data.database.models.Manga
+import eu.kanade.tachiyomi.ui.manga.MangaConstants
 import tachiyomi.core.preference.PreferenceStore
+import tachiyomi.core.preference.getEnum
 
 class MangaDetailsPreferences(private val preferenceStore: PreferenceStore) {
     fun filterChapterByRead() =
@@ -14,16 +16,18 @@ class MangaDetailsPreferences(private val preferenceStore: PreferenceStore) {
         this.preferenceStore.getInt("default_chapter_filter_by_bookmarked", Manga.SHOW_ALL)
 
     fun sortChapterOrder() =
-        this.preferenceStore.getInt(
-            "default_chapter_sort_by_source_or_number",
-            Manga.CHAPTER_SORTING_SOURCE
-        )
+        this.preferenceStore.getInt("default_chapter_sort_by", Manga.CHAPTER_SORTING_SMART)
 
     fun hideChapterTitlesByDefault() = this.preferenceStore.getBoolean("hide_chapter_titles")
+
+    fun filterChapterByAvailable() =
+        this.preferenceStore.getInt("hide_unavailable_chapters", Manga.SHOW_ALL)
 
     fun chaptersDescAsDefault() = this.preferenceStore.getBoolean("chapters_desc_as_default", true)
 
     fun autoThemeByCover() = this.preferenceStore.getBoolean("theme_manga_details", true)
+
+    fun dynamicCovers() = this.preferenceStore.getBoolean("dynamic_cover", true)
 
     fun forcePortrait() = this.preferenceStore.getBoolean("force_portrait", false)
 
@@ -37,5 +41,18 @@ class MangaDetailsPreferences(private val preferenceStore: PreferenceStore) {
 
     fun hideButtonText() = this.preferenceStore.getBoolean("hide_manga_detail_button_text")
 
-    fun extraLargeBackdrop() = this.preferenceStore.getBoolean("extra_large_backdrop")
+    fun backdropSize() =
+        this.preferenceStore.getEnum("backdrop_size", MangaConstants.BackdropSize.Default)
+
+    fun chapterSwipeRightAction() =
+        this.preferenceStore.getEnum(
+            "chapter_swipe_right_action",
+            MangaConstants.ChapterSwipeAction.ToggleBookmark,
+        )
+
+    fun chapterSwipeLeftAction() =
+        this.preferenceStore.getEnum(
+            "chapter_swipe_left_action",
+            MangaConstants.ChapterSwipeAction.ToggleRead,
+        )
 }

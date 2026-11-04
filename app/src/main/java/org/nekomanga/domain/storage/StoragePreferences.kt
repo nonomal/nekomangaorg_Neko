@@ -3,16 +3,24 @@ package org.nekomanga.domain.storage
 import android.content.Context
 import androidx.core.net.toUri
 import com.hippo.unifile.UniFile
+import tachiyomi.core.preference.Preference
 import tachiyomi.core.preference.PreferenceStore
 import tachiyomi.core.util.storage.FolderProvider
 
 class StoragePreferences(
     private val context: Context,
     private val folderProvider: FolderProvider,
-    private val preferenceStore: PreferenceStore
+    private val preferenceStore: PreferenceStore,
 ) {
 
     fun baseStorageDirectory() = preferenceStore.getString("storage_dir", folderProvider.path())
+
+    fun backupInterval() = this.preferenceStore.getInt("backup_interval", 12)
+
+    fun autoClearChapterCache() = preferenceStore.getBoolean("auto_clear_chapter_cache", false)
+
+    fun lastAutoBackupTimestamp() =
+        preferenceStore.getLong(Preference.appStateKey("last_auto_backup_timestamp"), 0L)
 
     fun baseStorageDirectoryAsUniFile() =
         UniFile.fromUri(context, baseStorageDirectory().get().toUri())!!

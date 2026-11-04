@@ -8,10 +8,11 @@ import eu.kanade.tachiyomi.network.services.NetworkServices
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.handlers.external.AzukiHandler
-import eu.kanade.tachiyomi.source.online.handlers.external.BilibiliHandler
 import eu.kanade.tachiyomi.source.online.handlers.external.ComikeyHandler
 import eu.kanade.tachiyomi.source.online.handlers.external.MangaHotHandler
 import eu.kanade.tachiyomi.source.online.handlers.external.MangaPlusHandler
+import eu.kanade.tachiyomi.source.online.handlers.external.MangaUpHandler
+import eu.kanade.tachiyomi.source.online.handlers.external.NamiComiHandler
 import eu.kanade.tachiyomi.source.online.models.dto.AtHomeDto
 import eu.kanade.tachiyomi.source.online.utils.MdUtil
 import eu.kanade.tachiyomi.util.getOrResultError
@@ -20,6 +21,7 @@ import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.nekomanga.domain.network.message
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.injectLazy
 
@@ -27,11 +29,15 @@ class PageHandler {
 
     val networkServices: NetworkServices by injectLazy()
     val preferences: PreferencesHelper by injectLazy()
+
+    val mangaDexPreferences: MangaDexPreferences by injectLazy()
+
     val mangaPlusHandler: MangaPlusHandler by injectLazy()
     val comikeyHandler: ComikeyHandler by injectLazy()
     val azukiHandler: AzukiHandler by injectLazy()
     val mangaHotHandler: MangaHotHandler by injectLazy()
-    val bilibiliHandler: BilibiliHandler by injectLazy()
+    val namiComiHandler: NamiComiHandler by injectLazy()
+    val mangaUpHandler: MangaUpHandler by injectLazy()
     val imageHandler: ImageHandler by injectLazy()
 
     suspend fun fetchPageList(chapter: SChapter): List<Page> {
@@ -55,7 +61,7 @@ class PageHandler {
                 val chapterDate = MdUtil.parseDate(chapterAttributesDto.readableAt)
                 val chapterDateNewer = chapterDate - currentDate > 0
 
-                if (externalUrl != null && chapterAttributesDto.pages == 0) {
+                if (externalUrl != null && chapterAttributesDto.pages <= 1) {
                     when {
                         "azuki manga".equals(chapter.scanlator, true) -> {
                             return@withContext azukiHandler.fetchPageList(externalUrl)
@@ -69,8 +75,11 @@ class PageHandler {
                         "comikey".equals(chapter.scanlator, true) -> {
                             return@withContext comikeyHandler.fetchPageList(externalUrl)
                         }
-                        "bilibili comics".equals(chapter.scanlator, true) -> {
-                            return@withContext bilibiliHandler.fetchPageList(externalUrl)
+                        "namicomi".equals(chapter.scanlator, true) -> {
+                            return@withContext namiComiHandler.fetchPageList(externalUrl)
+                        }
+                        "manga up!".equals(chapter.scanlator, true) -> {
+                            return@withContext mangaUpHandler.fetchPageList(externalUrl)
                         }
                         else -> throw Exception("${chapter.scanlator} not supported, try WebView")
                     }
@@ -86,7 +95,7 @@ class PageHandler {
                     networkServices.atHomeService
                         .getAtHomeServer(
                             chapter.mangadex_chapter_id,
-                            preferences.usePort443Only().get(),
+                            mangaDexPreferences.usePort443ForImageServer().get(),
                         )
                         .getOrResultError("trying to get at home response")
                         .getOrThrow { Exception(it.message()) }
@@ -94,7 +103,7 @@ class PageHandler {
                 return@withContext pageListParse(
                     chapter.mangadex_chapter_id,
                     atHomeDto,
-                    preferences.dataSaver().get(),
+                    mangaDexPreferences.dataSaver().get(),
                 )
             } catch (e: Exception) {
                 TimberKt.e(e) { "error processing page list" }
@@ -103,11 +112,7 @@ class PageHandler {
         }
     }
 
-    fun pageListParse(
-        chapterId: String,
-        atHomeDto: AtHomeDto,
-        dataSaver: Boolean,
-    ): List<Page> {
+    fun pageListParse(chapterId: String, atHomeDto: AtHomeDto, dataSaver: Boolean): List<Page> {
         val hash = atHomeDto.chapter.hash
         val pageArray =
             if (dataSaver) {
@@ -117,12 +122,11 @@ class PageHandler {
             }
         val now = Date().time
 
-        val pages =
-            pageArray.mapIndexed { pos, imgUrl ->
-                Page(pos + 1, atHomeDto.baseUrl, imgUrl, chapterId)
-            }
+        val pages = pageArray.mapIndexed { pos, imgUrl ->
+            Page(pos + 1, atHomeDto.baseUrl, imgUrl, chapterId)
+        }
 
-        imageHandler.updateTokenTracker(chapterId, now)
+        imageHandler.updateTokenTracker(chapterId, atHomeDto.baseUrl, now)
 
         return pages
     }

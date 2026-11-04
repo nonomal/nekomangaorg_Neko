@@ -6,32 +6,36 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 object MdConstants {
-    const val currentSeasonalId = "b5a843db-e757-4bec-89ec-5aa72aa61afa"
+    const val seasonalApi = "https://antsylich.github.io/mangadex-seasonal/seasonal-list.min.json"
     const val staffPicksId = "805ba886-dd99-4aa4-b460-4bd7c7b71352"
-    const val nekoDevPicksId = "9650e839-1266-4456-860d-c7eee164b451"
+    const val nekoDevPicksId = "4dd69b87-046e-4a85-9dca-ec88d7d314c7"
+    const val name = "MangaDex"
     const val baseUrl = "https://mangadex.org"
     const val cdnUrl = "https://uploads.mangadex.org"
     const val forumUrl = "https://forums.mangadex.org/threads/"
-    const val atHomeReportUrl = "https://api.mangadex.network/report"
-    const val noCoverUrl = "https://mangadex.org/cover-placeholder.jpg"
+    const val noCoverUrl =
+        "https://github.com/nekomangaorg/Neko/blob/main/.github/assets/404_logo.png?raw=true"
     const val chapterSuffix = "/chapter/"
 
-    val UnsupportedOfficialScanlators = arrayOf("Alpha Manga")
+    val UnsupportedOfficialGroupList =
+        arrayOf("Alpha Manga", "INKR Comics", "J-Novel Club", "Kodansha USA", "Tapas", "K MANGA")
 
     object Api {
         const val baseUrl = "https://api.mangadex.org"
         const val manga = "/manga"
         const val list = "/list"
         const val statistics = "/statistics"
+        const val createThread = "/forums/thread"
         const val chapter = "/chapter"
+        const val updates = "/user/follows/manga/feed"
         const val cover = "/cover"
         const val group = "/group"
+        const val user = "/user"
         const val author = "/author"
         const val userFollows = "/user/follows/manga"
         const val readingStatusForAllManga = "/manga/status"
         const val rating = "/rating"
         const val atHomeServer = "/at-home/server"
-        const val legacyMapping = "/legacy/mapping"
 
         const val baseAuthUrl = "https://auth.mangadex.org"
         private const val auth = "/realms/mangadex/protocol/openid-connect"
@@ -75,6 +79,7 @@ object MdConstants {
         const val author = 100
         const val group = 100
         const val latest = 100
+        const val user = 100
         const val latestSmaller = 50
     }
 
@@ -97,6 +102,7 @@ object MdConstants {
         const val coverArt = "cover_art"
         const val manga = "manga"
         const val scanlator = "scanlation_group"
+        const val uploader = "user"
     }
 
     object ContentRating {
@@ -142,6 +148,7 @@ object MdConstants {
         const val authorOrArtist = "authorOrArtist"
         const val group = "group"
         const val includedTagsParam = "includedTags[]"
+        const val mangaIds = "ids[]"
 
         fun sortParam(sort: String) = "order[$sort]"
 
@@ -155,5 +162,7 @@ object MdConstants {
         }
     }
 
-    val mdAtHomeTokenLifespan = TimeUnit.MINUTES.toMillis(5)
+    private const val TokenLifespanMinutes = 5L
+
+    val mdAtHomeTokenLifespan = TimeUnit.MINUTES.toMillis(TokenLifespanMinutes)
 }

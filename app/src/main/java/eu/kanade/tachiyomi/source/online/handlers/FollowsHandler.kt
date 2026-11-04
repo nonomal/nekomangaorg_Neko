@@ -10,7 +10,6 @@ import com.skydoves.sandwich.getOrNull
 import com.skydoves.sandwich.getOrThrow
 import com.skydoves.sandwich.onFailure
 import eu.kanade.tachiyomi.data.database.models.Track
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.network.services.MangaDexAuthorizedUserService
 import eu.kanade.tachiyomi.network.services.NetworkServices
@@ -23,6 +22,7 @@ import eu.kanade.tachiyomi.source.online.utils.FollowStatus
 import eu.kanade.tachiyomi.source.online.utils.MdUtil.Companion.getMangaUUID
 import eu.kanade.tachiyomi.source.online.utils.toSourceManga
 import eu.kanade.tachiyomi.util.getOrResultError
+import eu.kanade.tachiyomi.util.lang.toDisplayMessage
 import eu.kanade.tachiyomi.util.log
 import eu.kanade.tachiyomi.util.system.withIOContext
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +32,7 @@ import kotlinx.coroutines.withContext
 import org.nekomanga.constants.MdConstants
 import org.nekomanga.domain.manga.SourceManga
 import org.nekomanga.domain.network.ResultError
+import org.nekomanga.domain.site.MangaDexPreferences
 import org.nekomanga.logging.TimberKt
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -39,7 +40,7 @@ import uy.kohesive.injekt.injectLazy
 
 class FollowsHandler {
 
-    val preferences: PreferencesHelper by injectLazy()
+    val mangaDexPreferences: MangaDexPreferences by injectLazy()
     private val statusHandler: StatusHandler by injectLazy()
     private val authService: MangaDexAuthorizedUserService by lazy {
         Injekt.get<NetworkServices>().authService
@@ -49,30 +50,30 @@ class FollowsHandler {
     suspend fun fetchAllFollows(): Result<List<SourceManga>, ResultError> {
         return withContext(Dispatchers.IO) {
             return@withContext runCatching {
-                    val readingFuture = async { statusHandler.fetchReadingStatusForAllManga() }
+                val readingFuture = async { statusHandler.fetchReadingStatusForAllManga() }
 
-                    fetchOffset(0)
-                        .andThen { mangaListDto ->
-                            Ok(
-                                when (mangaListDto.total > mangaListDto.limit) {
-                                        true ->
-                                            fetchRestOfFollows(
-                                                mangaListDto.limit,
-                                                mangaListDto.total
-                                            ) + mangaListDto
-                                        false -> listOf(mangaListDto)
-                                    }
-                                    .map { it.data }
-                                    .flatten(),
-                            )
-                        }
-                        .andThen { allResults ->
-                            Ok(allFollowsParser(allResults, readingFuture.await()))
-                        }
-                }
+                fetchOffset(0)
+                    .andThen { mangaListDto ->
+                        Ok(
+                            when (mangaListDto.total > mangaListDto.limit) {
+                                    true ->
+                                        fetchRestOfFollows(
+                                            mangaListDto.limit,
+                                            mangaListDto.total,
+                                        ) + mangaListDto
+                                    false -> listOf(mangaListDto)
+                                }
+                                .map { it.data }
+                                .flatten()
+                        )
+                    }
+                    .andThen { allResults ->
+                        Ok(allFollowsParser(allResults, readingFuture.await()))
+                    }
+            }
                 .getOrElse {
                     TimberKt.e(it) { "Error fetching all follows" }
-                    Err(ResultError.Generic("Unknown error fetching all follows"))
+                    Err(ResultError.Generic(it.toDisplayMessage()))
                 }
         }
     }
@@ -94,9 +95,9 @@ class FollowsHandler {
 
     private fun allFollowsParser(
         mangaDataDtoList: List<MangaDataDto>,
-        readingStatusMap: Map<String, String?>
+        readingStatusMap: Map<String, String?>,
     ): List<SourceManga> {
-        val coverQuality = preferences.thumbnailQuality().get()
+        val coverQuality = mangaDexPreferences.coverQuality().get()
         return mangaDataDtoList
             .asSequence()
             .map {
@@ -118,7 +119,9 @@ class FollowsHandler {
             val readingStatusDto = ReadingStatusDto(status)
 
             withIOContext {
-                if (followStatus == FollowStatus.UNFOLLOWED) {
+                if (
+                    followStatus == FollowStatus.UNFOLLOWED || followStatus == FollowStatus.DROPPED
+                ) {
                     authService.unfollowManga(mangaId).onFailure {
                         this.log("trying to unfollow manga $mangaId")
                     }
@@ -144,31 +147,6 @@ class FollowsHandler {
 
     suspend fun updateReadingProgress(track: Track): Boolean {
         return true
-        /*return withContext(Dispatchers.IO) {
-            val mangaID = getMangaId(track.tracking_url)
-            val formBody = FormBody.Builder()
-                .add("volume", "0")
-                .add("chapter", track.last_chapter_read.toString())
-            XLog.d("chapter to update %s", track.last_chapter_read.toString())
-            val result = runCatching {
-                network.authClient.newCall(
-                    POST(
-                        "$baseUrl/ajax/actions.ajax.php?function=edit_progress&id=$mangaID",
-                        headers,
-                        formBody.build()
-                    )
-                ).execute()
-            }
-            result.exceptionOrNull()?.let {
-                if (it is EOFException) {
-                    return@withContext true
-                } else {
-                    XLog.e("error updating reading progress", it)
-                    return@withContext false
-                }
-            }
-            return@withContext result.isSuccess
-        }*/
     }
 
     suspend fun updateRating(track: Track): Boolean {

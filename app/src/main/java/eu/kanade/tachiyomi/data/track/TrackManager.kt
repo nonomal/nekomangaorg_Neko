@@ -4,27 +4,20 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.track.anilist.Anilist
 import eu.kanade.tachiyomi.data.track.kitsu.Kitsu
+import eu.kanade.tachiyomi.data.track.mangabaka.MangaBaka
 import eu.kanade.tachiyomi.data.track.mangaupdates.MangaUpdates
 import eu.kanade.tachiyomi.data.track.mangaupdates.MangaUpdatesHelper.getMangaUpdatesApiId
 import eu.kanade.tachiyomi.data.track.mdlist.MdList
 import eu.kanade.tachiyomi.data.track.myanimelist.MyAnimeList
 import eu.kanade.tachiyomi.source.online.utils.MdUtil
+import eu.kanade.tachiyomi.util.manga.MangaMappings
 import org.nekomanga.R
 import org.nekomanga.domain.track.TrackServiceItem
+import uy.kohesive.injekt.injectLazy
 
 class TrackManager(private val context: Context) {
 
-    companion object {
-        const val MDLIST = 0
-        const val MYANIMELIST = 1
-        const val ANILIST = 2
-        const val KITSU = 3
-        const val MANGA_UPDATES = 7
-
-        fun isValidTracker(id: Int): Boolean {
-            return arrayOf(MDLIST, MYANIMELIST, ANILIST, KITSU, MANGA_UPDATES).contains(id)
-        }
-    }
+    private val mappings: MangaMappings by injectLazy()
 
     val mdList = MdList(context, MDLIST)
 
@@ -36,13 +29,16 @@ class TrackManager(private val context: Context) {
 
     val mangaUpdates = MangaUpdates(context, MANGA_UPDATES)
 
+    val mangaBaka = MangaBaka(context, MANGABAKA)
+
     val services =
         hashMapOf(
             mdList.id to mdList,
             myAnimeList.id to myAnimeList,
             aniList.id to aniList,
             kitsu.id to kitsu,
-            mangaUpdates.id to mangaUpdates
+            mangaUpdates.id to mangaUpdates,
+            mangaBaka.id to mangaBaka,
         )
 
     fun getService(id: Int) = services[id]
@@ -56,6 +52,7 @@ class TrackManager(private val context: Context) {
             ANILIST -> manga.anilist_id
             KITSU -> manga.kitsu_id
             MANGA_UPDATES -> getMangaUpdatesApiId(manga)
+            MANGABAKA -> mappings.getMbId(MdUtil.getMangaUUID(manga.url))
             else -> null
         }
     }
@@ -74,6 +71,20 @@ class TrackManager(private val context: Context) {
             globalStatus == context.getString(R.string.follows_re_reading) ->
                 R.string.follows_re_reading
             else -> null
+        }
+    }
+
+    companion object {
+        const val MDLIST = 0
+        const val MYANIMELIST = 1
+        const val ANILIST = 2
+        const val KITSU = 3
+        const val MANGA_UPDATES = 7
+        const val MANGABAKA = 11
+
+        fun isValidTracker(id: Int): Boolean {
+            return arrayOf(MDLIST, MYANIMELIST, ANILIST, KITSU, MANGA_UPDATES, MANGABAKA)
+                .contains(id)
         }
     }
 }

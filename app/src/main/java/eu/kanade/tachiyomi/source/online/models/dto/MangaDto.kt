@@ -15,11 +15,7 @@ data class MangaListDto(
     val data: List<MangaDataDto>,
 )
 
-@Serializable
-data class MangaDto(
-    val result: String,
-    val data: MangaDataDto,
-)
+@Serializable data class MangaDto(val result: String, val data: MangaDataDto)
 
 @Serializable
 data class MangaDataDto(
@@ -45,10 +41,7 @@ data class MangaAttributesDto(
     val tags: List<TagDto>,
 )
 
-@Serializable
-data class TagDto(
-    val id: String,
-)
+@Serializable data class TagDto(val id: String)
 
 @Serializable
 data class RelationshipDtoList(
@@ -67,8 +60,12 @@ data class RelationshipDto(
 )
 
 @Serializable
+data class MangaRelationshipDto(val id: String, val attributes: MangaAttributesDto? = null)
+
+@Serializable
 data class IncludesAttributesDto(
     val name: String? = null,
+    val username: String? = null,
     val fileName: String? = null,
     val description: String? = null,
     val locale: String? = null,
@@ -78,48 +75,32 @@ data class IncludesAttributesDto(
 @Serializable
 data class AuthorListDto(
     val result: String,
-    val data: List<AuthorDto>,
+    val data: List<AuthorDataDto>,
     val limit: Int,
     val offset: Int,
     val total: Int,
 )
 
+@Serializable data class AuthorDto(val result: String, val data: AuthorDataDto)
+
 @Serializable
-data class AuthorDto(
+data class AuthorDataDto(
     val id: String,
     val attributes: AuthorAttributesDto,
+    val relationships: List<MangaRelationshipDto>? = null,
 )
 
-@Serializable
-data class AuthorAttributesDto(
-    val name: String,
-    val biography: JsonElement,
-)
+@Serializable data class AuthorAttributesDto(val name: String, val biography: JsonElement)
 
-@Serializable
-data class ReadingStatusDto(
-    val status: String?,
-)
+@Serializable data class ReadingStatusDto(val status: String?)
 
-@Serializable
-data class ReadingStatusMapDto(
-    val statuses: Map<String, String?>,
-)
+@Serializable data class ReadingStatusMapDto(val statuses: Map<String, String?>)
 
-@Serializable
-data class ReadChapterDto(
-    val data: List<String>,
-)
+@Serializable data class ReadChapterDto(val data: List<String>)
 
-@Serializable
-data class CoverListDto(
-    val results: List<CoverDto>,
-)
+@Serializable data class CoverListDto(val results: List<CoverDto>)
 
-@Serializable
-data class CoverDto(
-    val data: CoverDataDto,
-)
+@Serializable data class CoverDto(val data: CoverDataDto)
 
 @Serializable
 data class CoverDataDto(
@@ -127,16 +108,9 @@ data class CoverDataDto(
     val relationships: List<RelationshipDto>,
 )
 
-@Serializable
-data class CoverAttributesDto(
-    val fileName: String,
-)
+@Serializable data class CoverAttributesDto(val fileName: String)
 
-@Serializable
-data class AggregateDto(
-    val result: String,
-    val volumes: JsonElement,
-)
+@Serializable data class AggregateDto(val result: String, val volumes: JsonElement)
 
 @Serializable
 data class AggregateVolume(
@@ -148,6 +122,8 @@ data class AggregateVolume(
 @Serializable
 data class AggregateChapter(
     val chapter: String,
+    val id: String,
+    val others: List<String>,
     val count: String,
 )
 

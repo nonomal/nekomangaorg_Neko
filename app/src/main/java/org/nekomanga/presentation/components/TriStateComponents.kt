@@ -13,16 +13,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TriStateCheckbox
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import jp.wasabeef.gap.Gap
-import org.nekomanga.presentation.screens.ThemeColorState
-import org.nekomanga.presentation.screens.defaultThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
+import org.nekomanga.presentation.components.theme.defaultThemeColorState
+import org.nekomanga.presentation.extensions.surfaceColorAtElevationCustomColor
 import org.nekomanga.presentation.theme.Size
 
 @Composable
@@ -45,7 +46,7 @@ fun TriStateCheckboxRow(
             enabled = !disabled,
             colors =
                 CheckboxDefaults.colors(
-                    checkedColor = themeColorState.buttonColor,
+                    checkedColor = themeColorState.primaryColor,
                     checkmarkColor = MaterialTheme.colorScheme.surface,
                 ),
         )
@@ -55,7 +56,7 @@ fun TriStateCheckboxRow(
             color =
                 if (!disabled) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.onSurface.copy(NekoColors.disabledAlphaLowContrast),
-            style = rowTextStyle
+            style = rowTextStyle,
         )
     }
 }
@@ -87,18 +88,22 @@ fun TriStateFilterChip(
         label = { Text(text = name, style = labelTextStyle) },
         colors =
             FilterChipDefaults.filterChipColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-                selectedContainerColor =
-                    MaterialTheme.colorScheme.surfaceColorAtElevation(Size.small),
-                selectedLabelColor = MaterialTheme.colorScheme.primary,
-                selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
+                containerColor =
+                    MaterialTheme.colorScheme.surfaceColorAtElevationCustomColor(
+                        MaterialTheme.colorScheme.primary,
+                        Size.small,
+                    ),
+                labelColor = MaterialTheme.colorScheme.primary,
+                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary,
             ),
         border =
             FilterChipDefaults.filterChipBorder(
                 enabled = true,
                 selected = false,
-                borderColor = MaterialTheme.colorScheme.onSurface.copy(NekoColors.veryLowContrast),
-                selectedBorderColor = MaterialTheme.colorScheme.surfaceColorAtElevation(Size.small),
+                borderColor = MaterialTheme.colorScheme.primary.copy(NekoColors.veryLowContrast),
+                selectedBorderColor = Color.Transparent,
             ),
     )
 }
@@ -106,7 +111,7 @@ fun TriStateFilterChip(
 private fun toggleStateIfAble(
     disabled: Boolean,
     state: ToggleableState,
-    toggleState: (ToggleableState) -> Unit
+    toggleState: (ToggleableState) -> Unit,
 ) {
     if (!disabled) {
         val newState =

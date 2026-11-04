@@ -3,9 +3,9 @@ package org.nekomanga.presentation.components.dialog
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
-import androidx.compose.material.ripple.LocalRippleTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -18,7 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import org.nekomanga.R
 import org.nekomanga.presentation.components.CheckboxRow
-import org.nekomanga.presentation.screens.ThemeColorState
+import org.nekomanga.presentation.components.theme.ThemeColorState
 
 @Composable
 fun RemoveTrackingDialog(
@@ -26,11 +26,11 @@ fun RemoveTrackingDialog(
     name: String,
     canRemoveFromTracker: Boolean,
     onConfirm: (Boolean) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     CompositionLocalProvider(
-        LocalRippleTheme provides themeColorState.rippleTheme,
-        LocalTextSelectionColors provides themeColorState.textSelectionColors
+        LocalRippleConfiguration provides themeColorState.rippleConfiguration,
+        LocalTextSelectionColors provides themeColorState.textSelectionColors,
     ) {
         var removeFromTracker by remember { mutableStateOf(true) }
 
@@ -57,7 +57,9 @@ fun RemoveTrackingDialog(
                         onDismiss()
                     },
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor),
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = R.string.remove))
                 }
@@ -66,7 +68,9 @@ fun RemoveTrackingDialog(
                 TextButton(
                     onClick = onDismiss,
                     colors =
-                        ButtonDefaults.textButtonColors(contentColor = themeColorState.buttonColor)
+                        ButtonDefaults.textButtonColors(
+                            contentColor = themeColorState.primaryColor
+                        ),
                 ) {
                     Text(text = stringResource(id = R.string.cancel))
                 }

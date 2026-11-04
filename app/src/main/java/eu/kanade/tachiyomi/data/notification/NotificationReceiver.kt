@@ -6,13 +6,16 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
+import androidx.core.app.TaskStackBuilder
+import androidx.core.net.toUri
 import androidx.work.WorkManager
+import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.backup.BackupRestoreJob
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.database.models.Manga
+import eu.kanade.tachiyomi.data.database.models.canDeleteChapter
+import eu.kanade.tachiyomi.data.database.models.uuid
 import eu.kanade.tachiyomi.data.download.DownloadJob
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
@@ -22,19 +25,24 @@ import eu.kanade.tachiyomi.jobs.follows.StatusSyncJob
 import eu.kanade.tachiyomi.jobs.tracking.TrackingSyncJob
 import eu.kanade.tachiyomi.source.model.isMergedChapter
 import eu.kanade.tachiyomi.source.online.handlers.StatusHandler
+import eu.kanade.tachiyomi.ui.main.DeepLinks
 import eu.kanade.tachiyomi.ui.main.MainActivity
-import eu.kanade.tachiyomi.ui.manga.MangaDetailController
-import eu.kanade.tachiyomi.ui.more.NewUpdateDialogController
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.chapter.updateTrackChapterMarkedAsRead
-import eu.kanade.tachiyomi.util.storage.getUriCompat
-import eu.kanade.tachiyomi.util.system.executeOnIO
+import eu.kanade.tachiyomi.util.storage.getUriWithAuthority
+import eu.kanade.tachiyomi.util.system.getParcelableExtraCompat
 import eu.kanade.tachiyomi.util.system.launchIO
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.system.withUIContext
 import java.io.File
+import kotlinx.coroutines.coroutineScope
 import org.nekomanga.BuildConfig.APPLICATION_ID as ID
 import org.nekomanga.R
+import org.nekomanga.data.database.repository.ChapterRepository
+import org.nekomanga.data.database.repository.MangaRepository
+import org.nekomanga.domain.site.MangaDexPreferences
+import org.nekomanga.logging.TimberKt
 import tachiyomi.core.util.storage.DiskUtil
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -52,10 +60,7 @@ class NotificationReceiver : BroadcastReceiver() {
         when (intent.action) {
             // Dismiss notification
             ACTION_DISMISS_NOTIFICATION ->
-                dismissNotification(
-                    context,
-                    intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1),
-                )
+                dismissNotification(context, intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1))
             // Resume the download service
             ACTION_RESUME_DOWNLOADS -> DownloadJob.start(context)
             // Pause the download service
@@ -64,33 +69,90 @@ class NotificationReceiver : BroadcastReceiver() {
             }
             // Clear the download
             ACTION_CLEAR_DOWNLOADS -> downloadManager.clearQueue()
-            // Delete image from path and dismiss notification
-            ACTION_DELETE_IMAGE ->
-                deleteImage(
-                    context,
-                    intent.getStringExtra(EXTRA_FILE_LOCATION)!!,
-                    intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1),
-                )
+            // Delete image and dismiss notification
+            ACTION_DELETE_IMAGE -> {
+                val pendingResult = goAsync()
+                launchIO {
+                    try {
+                        val uri =
+                            intent.getParcelableExtraCompat<Uri>(EXTRA_URI)
+                                ?: intent.getStringExtra(EXTRA_FILE_LOCATION)?.let { path ->
+                                    if (path.startsWith("content://")) Uri.parse(path)
+                                    else File(path).toUri()
+                                }
+                        val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+                        if (uri != null) {
+                            deleteImage(context, uri, notificationId)
+                        } else {
+                            TimberKt.e { "ACTION_DELETE_IMAGE received with null URI extra" }
+                        }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
             // Cancel library update and dismiss notification
-            ACTION_CANCEL_LIBRARY_UPDATE -> cancelLibraryUpdate(context)
+            ACTION_CANCEL_LIBRARY_UPDATE -> {
+                val pendingResult = goAsync()
+                launchIO {
+                    try {
+                        cancelLibraryUpdate(context)
+                    } catch (e: Exception) {
+                        TimberKt.e(e) { "Failed to cancel library update from notification" }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
             ACTION_CANCEL_TRACKING_SYNC -> cancelTrackingSync(context)
             ACTION_CANCEL_FOLLOW_SYNC -> cancelFollowSync(context)
             ACTION_CANCEL_UPDATE_DOWNLOAD -> cancelDownloadUpdate(context)
             ACTION_CANCEL_RESTORE -> cancelRestoreUpdate(context)
+            ACTION_START_APP_UPDATE -> {
+                val url = intent.getStringExtra(AppDownloadInstallJob.EXTRA_DOWNLOAD_URL) ?: return
+                val version = intent.getStringExtra(AppDownloadInstallJob.EXTRA_VERSION) ?: return
+                val notifyOnInstall =
+                    intent.getBooleanExtra(AppDownloadInstallJob.EXTRA_NOTIFY_ON_INSTALL, false)
+                val pendingResult = goAsync()
+                launchIO {
+                    try {
+                        AppDownloadInstallJob.start(
+                            context,
+                            url,
+                            notifyOnInstall,
+                            version = version,
+                        )
+                    } catch (e: Exception) {
+                        TimberKt.e(e) { "Failed to start app update from notification" }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
             // Share backup file
-            ACTION_SHARE_BACKUP ->
-                shareBackup(
-                    context,
-                    intent.getParcelableExtra(EXTRA_URI)!!,
-                    intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1),
-                )
+            ACTION_SHARE_BACKUP -> {
+                val uri = intent.getParcelableExtraCompat<Uri>(EXTRA_URI)
+                val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+                if (uri != null) {
+                    shareBackup(context, uri, notificationId)
+                } else {
+                    TimberKt.e { "ACTION_SHARE_BACKUP received with null URI extra" }
+                }
+            }
             // Open reader activity
             ACTION_OPEN_CHAPTER -> {
-                openChapter(
-                    context,
-                    intent.getLongExtra(EXTRA_MANGA_ID, -1),
-                    intent.getLongExtra(EXTRA_CHAPTER_ID, -1),
-                )
+                val pendingResult = goAsync()
+                launchIO {
+                    try {
+                        openChapter(
+                            context,
+                            intent.getLongExtra(EXTRA_MANGA_ID, -1),
+                            intent.getLongExtra(EXTRA_CHAPTER_ID, -1),
+                        )
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
             }
             ACTION_MARK_AS_READ -> {
                 val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
@@ -103,7 +165,14 @@ class NotificationReceiver : BroadcastReceiver() {
                 }
                 val urls = intent.getStringArrayExtra(EXTRA_CHAPTER_URL) ?: return
                 val mangaId = intent.getLongExtra(EXTRA_MANGA_ID, -1)
-                markAsRead(urls, mangaId)
+                val pendingResult = goAsync()
+                launchIO {
+                    try {
+                        markAsRead(urls, mangaId)
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
             }
             // download manga chapter
             ACTION_DOWNLOAD_CHAPTER -> {
@@ -112,13 +181,20 @@ class NotificationReceiver : BroadcastReceiver() {
                     dismissNotification(
                         context,
                         notificationId,
-                        intent.getIntExtra(EXTRA_GROUP_ID, 0)
+                        intent.getIntExtra(EXTRA_GROUP_ID, 0),
                     )
                 }
                 val urls = intent.getStringArrayExtra(EXTRA_CHAPTER_URL) ?: return
                 val mangaId = intent.getLongExtra(EXTRA_MANGA_ID, -1)
                 if (mangaId > -1) {
-                    downloadChapters(urls, mangaId)
+                    val pendingResult = goAsync()
+                    launchIO {
+                        try {
+                            downloadChapters(urls, mangaId)
+                        } finally {
+                            pendingResult.finish()
+                        }
+                    }
                 }
             }
 
@@ -126,7 +202,7 @@ class NotificationReceiver : BroadcastReceiver() {
             ACTION_SHARE_CRASH_LOG ->
                 shareFile(
                     context,
-                    intent.getParcelableExtra(EXTRA_URI)!!,
+                    intent.getParcelableExtraCompat<Uri>(EXTRA_URI)!!,
                     "text/plain",
                     intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1),
                 )
@@ -169,19 +245,27 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param mangaId id of manga
      * @param chapterId id of chapter
      */
-    internal fun openChapter(context: Context, mangaId: Long, chapterId: Long) {
+    internal suspend fun openChapter(context: Context, mangaId: Long, chapterId: Long) {
         dismissNotification(context, Notifications.ID_NEW_CHAPTERS)
-        val db = DatabaseHelper(context)
-        val manga = db.getManga(mangaId).executeAsBlocking()
-        val chapter = db.getChapter(chapterId).executeAsBlocking()
-        if (manga != null && chapter != null) {
-            val intent =
-                ReaderActivity.newIntent(context, manga, chapter).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        coroutineScope {
+            val chapterRepository: ChapterRepository = Injekt.get()
+            val mangaRepository: MangaRepository = Injekt.get()
+            val manga = mangaRepository.getMangaById(mangaId)
+            val chapter = chapterRepository.getChapterById(chapterId)
+            if (manga != null && chapter != null) {
+                val mangaIntent =
+                    MainActivity.openMangaIntent(context, manga.id).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    }
+                val readerIntent = ReaderActivity.newIntent(context, manga, chapter)
+                TaskStackBuilder.create(context).run {
+                    addNextIntent(mangaIntent)
+                    addNextIntent(readerIntent)
+                    startActivities()
                 }
-            context.startActivity(intent)
-        } else {
-            context.toast(context.getString(R.string.next_chapter_not_found))
+            } else {
+                context.toast(context.getString(R.string.next_chapter_not_found))
+            }
         }
     }
 
@@ -209,18 +293,19 @@ class NotificationReceiver : BroadcastReceiver() {
     /**
      * Called to delete image
      *
-     * @param path path of file
+     * @param uri uri of the saved image
      * @param notificationId id of notification
      */
-    private fun deleteImage(context: Context, path: String, notificationId: Int) {
-        // Dismiss notification
-        dismissNotification(context, notificationId)
-
-        // Delete file
-        val file = File(path)
-        file.delete()
-
-        DiskUtil.scanMedia(context, file)
+    private suspend fun deleteImage(context: Context, uri: Uri, notificationId: Int) {
+        val deleted = UniFile.fromUri(context, uri)?.delete() == true
+        if (deleted) {
+            // Dismiss notification only after successful deletion
+            dismissNotification(context, notificationId)
+            DiskUtil.scanMedia(context, uri)
+        } else {
+            TimberKt.e { "Could not delete saved page $uri" }
+            withUIContext { context.toast(R.string.could_not_delete_picture) }
+        }
     }
 
     /**
@@ -229,7 +314,7 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param context context of application
      * @param notificationId id of notification
      */
-    private fun cancelLibraryUpdate(context: Context) {
+    private suspend fun cancelLibraryUpdate(context: Context) {
         LibraryUpdateJob.stop(context)
     }
 
@@ -243,31 +328,39 @@ class NotificationReceiver : BroadcastReceiver() {
     }
 
     /** Method called when user wants to mark as read */
-    private fun markAsRead(chapterUrls: Array<String>, mangaId: Long) {
-        val db: DatabaseHelper = Injekt.get()
+    private suspend fun markAsRead(chapterUrls: Array<String>, mangaId: Long) {
         val preferences: PreferencesHelper = Injekt.get()
+        val mangaDexPreference: MangaDexPreferences = Injekt.get()
+        val chapterRepository: ChapterRepository = Injekt.get()
+        val mangaRepository: MangaRepository = Injekt.get()
 
-        val manga = db.getManga(mangaId).executeAsBlocking() ?: return
+        val manga = mangaRepository.getMangaById(mangaId) ?: return
 
-        val dbChapters =
-            chapterUrls.map { chapterUrl ->
-                val chapter = db.getChapter(chapterUrl, mangaId).executeAsBlocking() ?: return
-                chapter.read = true
-                db.updateChapterProgress(chapter).executeAsBlocking()
-                chapter
-            }
+        val dbChapters = chapterUrls.mapNotNull { chapterUrl ->
+            val chapter =
+                chapterRepository.getChapterByUrlAndMangaId(chapterUrl, mangaId)
+                    ?: return@mapNotNull null
+            chapter.read = true
+            chapterRepository.updateChaptersProgress(listOf(chapter))
+            chapter
+        }
         if (preferences.removeAfterMarkedAsRead().get()) {
-            downloadManager.deleteChapters(dbChapters, manga)
+            val chaptersToDelete = dbChapters.filter { it.canDeleteChapter() }
+            downloadManager.deleteChapters(manga, chaptersToDelete)
         }
 
-        if (preferences.readingSync().get()) {
-            val nonMergedChapterIds =
-                dbChapters.filter { !it.isMergedChapter() }.map { it.mangadex_chapter_id }
-            if (nonMergedChapterIds.isNotEmpty()) {
+        if (mangaDexPreference.readingSync().get()) {
+            val (mergedChapters, nonMergedChapters) = dbChapters.partition { it.isMergedChapter() }
+            if (nonMergedChapters.isNotEmpty()) {
                 val statusHandler: StatusHandler = Injekt.get()
-                launchIO {
-                    statusHandler.marksChaptersStatus(mangaId.toString(), nonMergedChapterIds)
-                }
+                statusHandler.markChaptersStatus(
+                    manga.uuid(),
+                    nonMergedChapters.map { it.mangadex_chapter_id },
+                )
+            }
+            if (mergedChapters.isNotEmpty()) {
+                val statusHandler: StatusHandler = Injekt.get()
+                statusHandler.markMergedChaptersStatus(mergedChapters)
             }
         }
         val newLastChapter = dbChapters.maxByOrNull { it.chapter_number.toInt() }
@@ -290,27 +383,22 @@ class NotificationReceiver : BroadcastReceiver() {
         dismissNotification(context, Notifications.ID_UPDATER)
     }
 
-    private fun startAppUpdate(context: Context, intent: Intent) {
-        val url = intent.getStringExtra(AppDownloadInstallJob.EXTRA_DOWNLOAD_URL) ?: return
-        val notifyOnInstall =
-            intent.getBooleanExtra(AppDownloadInstallJob.EXTRA_NOTIFY_ON_INSTALL, false)
-        AppDownloadInstallJob.start(context, url, notifyOnInstall)
-    }
-
     /**
      * Method called when user wants to download chapters
      *
      * @param chapterUrls URLs of chapter to download
      * @param mangaId id of manga
      */
-    private fun downloadChapters(chapterUrls: Array<String>, mangaId: Long) {
-        launchIO {
-            val db: DatabaseHelper = Injekt.get()
-            val manga = db.getManga(mangaId).executeOnIO()
-            val chapters = chapterUrls.mapNotNull { db.getChapter(it, mangaId).executeOnIO() }
-            if (manga != null && chapters.isNotEmpty()) {
-                downloadManager.downloadChapters(manga, chapters)
-            }
+    private suspend fun downloadChapters(chapterUrls: Array<String>, mangaId: Long) {
+        val chapterRepository: ChapterRepository = Injekt.get()
+        val mangaRepository: MangaRepository = Injekt.get()
+
+        val manga = mangaRepository.getMangaById(mangaId)
+        val chapters = chapterUrls.mapNotNull {
+            chapterRepository.getChapterByUrlAndMangaId(it, mangaId)
+        }
+        if (manga != null && chapters.isNotEmpty()) {
+            downloadManager.downloadChapters(manga, chapters)
         }
     }
 
@@ -350,9 +438,6 @@ class NotificationReceiver : BroadcastReceiver() {
         // Called to download a chapter
         private const val ACTION_DOWNLOAD_CHAPTER = "$ID.$NAME.ACTION_DOWNLOAD_CHAPTER"
 
-        // Value containing file location.
-        private const val EXTRA_FILE_LOCATION = "$ID.$NAME.FILE_LOCATION"
-
         // Called to resume downloads.
         private const val ACTION_RESUME_DOWNLOADS = "$ID.$NAME.ACTION_RESUME_DOWNLOADS"
 
@@ -367,6 +452,9 @@ class NotificationReceiver : BroadcastReceiver() {
 
         // Value containing uri.
         private const val EXTRA_URI = "$ID.$NAME.URI"
+
+        // Value containing file location (legacy compatibility for in-flight notifications).
+        private const val EXTRA_FILE_LOCATION = "$ID.$NAME.FILE_LOCATION"
 
         // Value containing notification id.
         private const val EXTRA_NOTIFICATION_ID = "$ID.$NAME.NOTIFICATION_ID"
@@ -476,20 +564,18 @@ class NotificationReceiver : BroadcastReceiver() {
             notificationId: Int,
             groupId: Int? = null,
         ) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val groupKey =
-                    context.notificationManager.activeNotifications
-                        .find { it.id == notificationId }
-                        ?.groupKey
-                if (groupId != null && groupId != 0 && groupKey != null && groupKey.isNotEmpty()) {
-                    val notifications =
-                        context.notificationManager.activeNotifications.filter {
-                            it.groupKey == groupKey
-                        }
-                    if (notifications.size == 2) {
-                        context.notificationManager.cancel(groupId)
-                        return
+            val groupKey =
+                context.notificationManager.activeNotifications
+                    .find { it.id == notificationId }
+                    ?.groupKey
+            if (groupId != null && groupId != 0 && groupKey != null && groupKey.isNotEmpty()) {
+                val notifications =
+                    context.notificationManager.activeNotifications.filter {
+                        it.groupKey == groupKey
                     }
+                if (notifications.size == 2) {
+                    context.notificationManager.cancel(groupId)
+                    return
                 }
             }
             context.notificationManager.cancel(notificationId)
@@ -500,27 +586,32 @@ class NotificationReceiver : BroadcastReceiver() {
          * share activity
          *
          * @param context context of application
-         * @param path location path of file
+         * @param uri uri of the saved image
          * @param notificationId id of notification
          * @return [PendingIntent]
          */
         internal fun shareImagePendingBroadcast(
             context: Context,
-            path: String,
+            uri: Uri,
             notificationId: Int,
         ): PendingIntent {
             val shareIntent =
                 Intent(Intent.ACTION_SEND).apply {
-                    val uri = File(path).getUriCompat(context)
-                    putExtra(Intent.EXTRA_STREAM, uri)
+                    val stream = uri.getUriWithAuthority(context)
+                    putExtra(Intent.EXTRA_STREAM, stream)
                     flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    clipData = ClipData.newRawUri(null, uri)
+                    clipData = ClipData.newRawUri(null, stream)
                     type = "image/*"
+                }
+            val chooser =
+                Intent.createChooser(shareIntent, context.getString(R.string.share)).apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    clipData = shareIntent.clipData
                 }
             return PendingIntent.getActivity(
                 context,
                 0,
-                shareIntent,
+                chooser,
                 PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
@@ -529,19 +620,19 @@ class NotificationReceiver : BroadcastReceiver() {
          * Returns [PendingIntent] that starts a service which removes an image from disk
          *
          * @param context context of application
-         * @param path location path of file
+         * @param uri uri of the saved image
          * @param notificationId id of notification
          * @return [PendingIntent]
          */
         internal fun deleteImagePendingBroadcast(
             context: Context,
-            path: String,
+            uri: Uri,
             notificationId: Int,
         ): PendingIntent {
             val intent =
                 Intent(context, NotificationReceiver::class.java).apply {
                     action = ACTION_DELETE_IMAGE
-                    putExtra(EXTRA_FILE_LOCATION, path)
+                    putExtra(EXTRA_URI, uri)
                     putExtra(EXTRA_NOTIFICATION_ID, notificationId)
                 }
             return PendingIntent.getBroadcast(
@@ -564,13 +655,21 @@ class NotificationReceiver : BroadcastReceiver() {
             manga: Manga,
             chapter: Chapter,
         ): PendingIntent {
-            val newIntent = ReaderActivity.newIntent(context, manga, chapter)
-            return PendingIntent.getActivity(
-                context,
-                manga.id.hashCode(),
-                newIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+            val mangaIntent =
+                MainActivity.openMangaIntent(context, manga.id).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                }
+            val readerIntent = ReaderActivity.newIntent(context, manga, chapter)
+            return TaskStackBuilder.create(context).run {
+                addNextIntent(mangaIntent)
+                addNextIntent(readerIntent)
+                checkNotNull(
+                    getPendingIntent(
+                        manga.id.hashCode(),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    )
+                )
+            }
         }
 
         /**
@@ -584,16 +683,18 @@ class NotificationReceiver : BroadcastReceiver() {
             context: Context,
             notes: String,
             downloadLink: String,
+            releaseLink: String,
+            version: String = "",
         ): PendingIntent {
             val newIntent =
-                Intent(
-                        context,
-                        MainActivity::class.java,
-                    )
-                    .setAction(MainActivity.SHORTCUT_UPDATE_NOTES)
+                Intent(context, MainActivity::class.java)
+                    .setAction(DeepLinks.Actions.UpdateNotes)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(NewUpdateDialogController.BODY_KEY, notes)
-                    .putExtra(NewUpdateDialogController.URL_KEY, downloadLink)
+                    .putExtra(DeepLinks.Extras.AppUpdateNotes, notes)
+                    .putExtra(DeepLinks.Extras.AppUpdateUrl, downloadLink)
+                    .putExtra(DeepLinks.Extras.AppUpdateReleaseUrl, releaseLink)
+                    .putExtra(DeepLinks.Extras.AppUpdateVersion, version)
+
             return PendingIntent.getActivity(
                 context,
                 downloadLink.hashCode(),
@@ -611,15 +712,15 @@ class NotificationReceiver : BroadcastReceiver() {
         internal fun openChapterPendingActivity(
             context: Context,
             manga: Manga,
-            groupId: Int
+            groupId: Int,
         ): PendingIntent {
             val newIntent =
                 Intent(context, MainActivity::class.java)
-                    .setAction(MainActivity.SHORTCUT_MANGA)
+                    .setAction(DeepLinks.Actions.Manga)
                     .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(MangaDetailController.MANGA_EXTRA, manga.id)
-                    .putExtra("notificationId", manga.id.hashCode())
-                    .putExtra("groupId", groupId)
+                    .putExtra(DeepLinks.Extras.MangaId, manga.id)
+                    .putExtra(DeepLinks.Extras.NotificationId, manga.id.hashCode())
+                    .putExtra(DeepLinks.Extras.GroupId, groupId)
             return PendingIntent.getActivity(
                 context,
                 manga.id.hashCode(),
@@ -652,7 +753,7 @@ class NotificationReceiver : BroadcastReceiver() {
                 context,
                 manga.id.hashCode(),
                 newIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
 
@@ -665,7 +766,7 @@ class NotificationReceiver : BroadcastReceiver() {
          */
         internal fun openErrorOrSkippedLogPendingActivity(
             context: Context,
-            uri: Uri?
+            uri: Uri?,
         ): PendingIntent {
             val intent =
                 Intent().apply {
@@ -687,7 +788,7 @@ class NotificationReceiver : BroadcastReceiver() {
                 context,
                 0,
                 toLaunch,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
 
@@ -779,13 +880,15 @@ class NotificationReceiver : BroadcastReceiver() {
         internal fun startAppUpdatePendingJob(
             context: Context,
             url: String,
-            notifyOnInstall: Boolean = false
+            version: String,
+            notifyOnInstall: Boolean = false,
         ): PendingIntent {
             val intent =
                 Intent(context, NotificationReceiver::class.java).apply {
                     action = ACTION_START_APP_UPDATE
                     putExtra(AppDownloadInstallJob.EXTRA_DOWNLOAD_URL, url)
                     putExtra(AppDownloadInstallJob.EXTRA_NOTIFY_ON_INSTALL, notifyOnInstall)
+                    putExtra(AppDownloadInstallJob.EXTRA_VERSION, version)
                 }
             return PendingIntent.getBroadcast(
                 context,

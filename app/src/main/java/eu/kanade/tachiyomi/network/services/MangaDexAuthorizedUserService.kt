@@ -1,6 +1,9 @@
 package eu.kanade.tachiyomi.network.services
 
 import com.skydoves.sandwich.ApiResponse
+import eu.kanade.tachiyomi.source.online.models.dto.ChapterListDto
+import eu.kanade.tachiyomi.source.online.models.dto.ForumThreadDto
+import eu.kanade.tachiyomi.source.online.models.dto.ForumThreadResponseDto
 import eu.kanade.tachiyomi.source.online.models.dto.MangaListDto
 import eu.kanade.tachiyomi.source.online.models.dto.MarkStatusDto
 import eu.kanade.tachiyomi.source.online.models.dto.RatingDto
@@ -9,6 +12,7 @@ import eu.kanade.tachiyomi.source.online.models.dto.ReadChapterDto
 import eu.kanade.tachiyomi.source.online.models.dto.ReadingStatusDto
 import eu.kanade.tachiyomi.source.online.models.dto.ReadingStatusMapDto
 import eu.kanade.tachiyomi.source.online.models.dto.ResultDto
+import eu.kanade.tachiyomi.source.online.models.dto.UserListDto
 import org.nekomanga.constants.MdConstants
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -80,4 +84,24 @@ interface MangaDexAuthorizedUserService {
 
     @DELETE("${MdConstants.Api.rating}/{id}")
     suspend fun removeRating(@Path("id") mangaId: String): ApiResponse<ResultDto>
+
+    @POST(MdConstants.Api.createThread)
+    suspend fun createForumThread(
+        @Body forumThreadDto: ForumThreadDto
+    ): ApiResponse<ForumThreadResponseDto>
+
+    @Headers("Cache-Control: no-cache")
+    @GET("${MdConstants.Api.updates}?order[readableAt]=desc")
+    suspend fun feedUpdates(
+        @Query("limit") limit: Int,
+        @Query("offset") offset: Int,
+        @Query("translatedLanguage[]") translatedLanguages: List<String>,
+        @Query("contentRating[]") contentRating: List<String>,
+        @Query("excludedGroups[]") blockedGroups: List<String>,
+        @Query("excludedUploaders[]") blockedUploaders: List<String>,
+    ): ApiResponse<ChapterListDto>
+
+    @Headers("Cache-Control: no-cache")
+    @GET(MdConstants.Api.user)
+    suspend fun uploader(@Query("username") username: String): ApiResponse<UserListDto>
 }
